@@ -266,3 +266,53 @@ def test_reject_terminations_constant_includes_new_modes():
     assert "error" in REJECT_TERMINATIONS
     assert "illegal_move" in REJECT_TERMINATIONS
     assert "time" in REJECT_TERMINATIONS
+
+
+def _async_pattern():
+    for name, pattern, _ in REQUIRED_PATTERNS:
+        if name == "async_select_move":
+            return pattern
+    raise AssertionError("async_select_move pattern not found")
+
+
+def test_async_pattern_accepts_multiline_signature_with_type_annotations():
+    """Regression: real LLMs (Gemini, GPT-4) format the signature multi-line
+    with `: chess.Board`/`: int` annotations. The original regex required
+    everything on one line and false-rejected every such candidate, leaving
+    candidates=[] and the tournament with zero games. Reproducer:
+    """
+    real_gemini_source = (
+        "class CandidateEngine(BaseLLMEngine):\n"
+        "    async def select_move(\n"
+        "        self,\n"
+        "        board: chess.Board,\n"
+        "        time_remaining_ms: int,\n"
+        "    ) -> chess.Move:\n"
+        "        pass\n"
+    )
+    assert _async_pattern().search(real_gemini_source)
+
+
+def test_async_pattern_accepts_one_line_signature_too():
+    """The compact form a hand-written engine might use must still match."""
+    src = "async def select_move(self, board, time_remaining_ms):\n    pass\n"
+    assert _async_pattern().search(src)
+
+
+def test_async_pattern_rejects_non_async_def():
+    """Sync `def select_move(...)` must still be rejected."""
+    src = (
+        "def select_move(\n"
+        "    self,\n"
+        "    board: chess.Board,\n"
+        "    time_remaining_ms: int,\n"
+        ") -> chess.Move:\n"
+        "    pass\n"
+    )
+    assert not _async_pattern().search(src)
+
+
+def test_async_pattern_rejects_missing_param():
+    """Missing `time_remaining_ms` parameter must be rejected."""
+    src = "async def select_move(self, board):\n    pass\n"
+    assert not _async_pattern().search(src)

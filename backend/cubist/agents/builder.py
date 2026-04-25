@@ -106,8 +106,17 @@ REQUIRED_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
     ),
     (
         "async_select_move",
+        # Match `async def select_move(` then anywhere within the param list
+        # (which may span multiple lines and include `: chess.Board` style
+        # type annotations) the names ``board`` and ``time_remaining_ms``,
+        # then the closing ``)``. The previous version required the three
+        # params on one line with no annotations and false-rejected every
+        # well-formatted engine Gemini emits.
         re.compile(
-            r"async\s+def\s+select_move\s*\(\s*self\s*,\s*board\s*,\s*time_remaining_ms",
+            r"async\s+def\s+select_move\s*\("
+            r"[^)]*\bboard\b"
+            r"[^)]*\btime_remaining_ms\b"
+            r"[^)]*\)",
         ),
         "engine has no `async def select_move(self, board, time_remaining_ms)` — "
         "referee will await select_move and crash on a non-coroutine return",
