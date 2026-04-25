@@ -6,6 +6,7 @@ served separately over `/ws` (see `server.py`).
 
 Routes:
     GET  /api/engines            all engines ever seen, oldest-first implicit
+    GET  /api/engines/{name}/code  download the .py source for an engine
     GET  /api/generations        all generations, ordered by number
     GET  /api/games[?gen=N]      games, optionally filtered to one generation
     POST /api/generations/run    cancel any in-flight generation; start fresh
@@ -13,10 +14,12 @@ Routes:
     POST /api/state/clear        cancel + wipe DB + delete generated engines
 """
 
+import importlib.util
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from sqlmodel import delete, select
 
 from cubist.storage.db import get_session
@@ -31,6 +34,53 @@ def list_engines():
     """Return every engine row (baseline + every promoted/candidate engine)."""
     with get_session() as s:
         return s.exec(select(EngineRow)).all()
+
+
+@router.get("/engines/{name}/code")
+def download_engine_code(name: str):
+    """Stream the engine's .py source as a downloadable attachment.
+
+    For generated engines, ``EngineRow.code_path`` is a filesystem path
+    written by the builder. For the seeded baseline it is the dotted
+    module name ``cubist.engines.baseline`` (see scripts/seed_baseline.py)
+    — resolve those via importlib to find the on-disk source file.
+
+    The baseline-v0 row is wiped by ``POST /api/state/clear`` along with
+    every other engine row, but its source file on disk is intentionally
+    left in place. Fall back to the known module path for that name so a
+    post-clear UI can still surface the seed file the strategist prompts
+    off.
+    """
+    with get_session() as s:
+        row = s.exec(select(EngineRow).where(EngineRow.name == name)).first()
+
+    if row is None:
+        if name == "baseline-v0":
+            code_path = "cubist.engines.baseline"
+        else:
+            raise HTTPException(status_code=404, detail=f"unknown engine: {name}")
+    else:
+        code_path = row.code_path
+
+    path = Path(code_path)
+    if not path.is_absolute() or not path.exists():
+        # Treat as a dotted module name (baseline-v0 case).
+        spec = importlib.util.find_spec(code_path)
+        if spec is None or spec.origin is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"engine {name} has no resolvable source file",
+            )
+        path = Path(spec.origin)
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="engine source missing on disk")
+
+    return FileResponse(
+        path,
+        media_type="text/x-python",
+        filename=f"{name}.py",
+    )
 
 
 @router.get("/generations")

@@ -1,6 +1,7 @@
 """Tests for cubist.orchestration.generation.run_generation_task."""
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pytest
@@ -96,3 +97,99 @@ async def test_run_generation_task_first_run_uses_baseline(mem_db, monkeypatch):
 
     assert called["incumbents"][0].name == "baseline-v0"
     assert called["generation_number"] == 1
+
+
+def test_champion_question_none_for_first_generation(mem_db):
+    from cubist.orchestration.generation import _champion_question
+
+    assert _champion_question(1) is None
+
+
+def test_champion_question_picks_latest_promoted_generation(mem_db):
+    """When the latest promotion was generation 3, the champion question
+    is the question from gen 3 whose category equals gen 3's winning
+    category — not gen 4's (which didn't promote) and not gen 1's."""
+    with Session(mem_db) as s:
+        s.add(GenerationRow(
+            number=1,
+            champion_before="baseline-v0",
+            champion_after="gen1-prompt-aaaaaa",
+            strategist_questions_json=json.dumps([
+                {"category": "prompt", "text": "old gen1 prompt question"},
+                {"category": "search", "text": "old gen1 search question"},
+            ]),
+            finished_at=datetime.utcnow(),
+        ))
+        s.add(GenerationRow(
+            number=2,
+            champion_before="gen1-prompt-aaaaaa",
+            champion_after="gen1-prompt-aaaaaa",
+            strategist_questions_json=json.dumps([
+                {"category": "book", "text": "gen2 book question"},
+            ]),
+            finished_at=datetime.utcnow(),
+        ))
+        s.add(GenerationRow(
+            number=3,
+            champion_before="gen1-prompt-aaaaaa",
+            champion_after="gen3-search-bbbbbb",
+            strategist_questions_json=json.dumps([
+                {"category": "search", "text": "the actual current originator"},
+                {"category": "book", "text": "gen3 book question"},
+            ]),
+            finished_at=datetime.utcnow(),
+        ))
+        s.add(GenerationRow(
+            number=4,
+            champion_before="gen3-search-bbbbbb",
+            champion_after="gen3-search-bbbbbb",
+            strategist_questions_json=json.dumps([
+                {"category": "evaluation", "text": "gen4 eval question"},
+            ]),
+            finished_at=datetime.utcnow(),
+        ))
+        s.commit()
+
+    from cubist.orchestration.generation import _champion_question
+
+    cq = _champion_question(5)
+    assert cq == {"category": "search", "text": "the actual current originator"}
+
+
+def test_champion_question_none_when_no_promotion(mem_db):
+    """If every prior generation kept the baseline as champion, the
+    champion has no originating strategist question."""
+    with Session(mem_db) as s:
+        s.add(GenerationRow(
+            number=1,
+            champion_before="baseline-v0",
+            champion_after="baseline-v0",
+            strategist_questions_json=json.dumps([
+                {"category": "prompt", "text": "..."}
+            ]),
+            finished_at=datetime.utcnow(),
+        ))
+        s.commit()
+
+    from cubist.orchestration.generation import _champion_question
+
+    assert _champion_question(2) is None
+
+
+def test_champion_question_none_for_unparsable_champion_name(mem_db):
+    """If champion_after doesn't follow the gen{N}-{cat}-{hash} format
+    (e.g. a hand-crafted promotion to baseline), the lookup returns None
+    rather than guessing a category."""
+    with Session(mem_db) as s:
+        s.add(GenerationRow(
+            number=1,
+            champion_before="gen0-prompt-aaaaaa",
+            champion_after="baseline-v0",
+            strategist_questions_json="[]",
+            finished_at=datetime.utcnow(),
+        ))
+        s.commit()
+
+    from cubist.orchestration.generation import _champion_question
+
+    assert _champion_question(2) is None

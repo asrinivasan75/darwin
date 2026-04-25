@@ -60,9 +60,7 @@ export default function GenerationTimeline({ events }: GenerationTimelineProps) 
   if (rows.length === 0) {
     return (
       <div className="bg-gray-800 rounded-lg p-4">
-        <h2 className="text-xs font-semibold tracking-wider text-gray-400 uppercase mb-3">
-          Generation Timeline
-        </h2>
+        <TimelineHeader />
         <p className="text-gray-500 text-sm italic">
           Waiting for first generation…
         </p>
@@ -72,9 +70,7 @@ export default function GenerationTimeline({ events }: GenerationTimelineProps) 
 
   return (
     <div className="bg-gray-800 rounded-lg p-4 overflow-x-auto">
-      <h2 className="text-xs font-semibold tracking-wider text-gray-400 uppercase mb-3">
-        Generation Timeline
-      </h2>
+      <TimelineHeader />
 
       <table className="text-xs border-collapse w-full">
         <thead>
@@ -100,6 +96,31 @@ export default function GenerationTimeline({ events }: GenerationTimelineProps) 
 }
 
 // ── Internal sub-components ──────────────────────────────────────────────────
+
+/**
+ * Header bar for the timeline panel: title plus a download link for the
+ * baseline engine source. Baseline is the seed file every strategist
+ * prompt builds off, so judges/operators reading the timeline often want
+ * to inspect or save it. Surfacing it here keeps it reachable even when
+ * the table is empty (no generations run yet).
+ */
+function TimelineHeader() {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <h2 className="text-xs font-semibold tracking-wider text-gray-400 uppercase">
+        Generation Timeline
+      </h2>
+      <a
+        href="/api/engines/baseline-v0/code"
+        download="baseline-v0.py"
+        className="text-blue-400 hover:text-blue-300 text-[10px] font-mono"
+        title="Download baseline-v0.py — the seed engine the strategist prompts off"
+      >
+        ↓ baseline-v0.py
+      </a>
+    </div>
+  );
+}
 
 /**
  * Renders one generation row in the timeline table.
@@ -135,15 +156,27 @@ function GenerationRow({ row }: { row: GenRow }) {
         </td>
       ))}
 
-      {/* New champion after the generation */}
+      {/* New champion after the generation, with a download link to its
+          .py source. Hidden while in-progress since no champion is set
+          yet. */}
       <td
-        className="p-1.5 font-mono truncate max-w-[100px] text-gray-300"
+        className="p-1.5 font-mono truncate max-w-[140px] text-gray-300"
         title={row.newChampion}
       >
         {inProgress ? (
           <span className="text-gray-500">…</span>
         ) : (
-          shortName(row.newChampion!)
+          <span className="inline-flex items-center gap-1.5">
+            <span className="truncate">{shortName(row.newChampion!)}</span>
+            <a
+              href={`/api/engines/${encodeURIComponent(row.newChampion!)}/code`}
+              download={`${row.newChampion}.py`}
+              className="text-blue-400 hover:text-blue-300 text-[10px] font-mono shrink-0"
+              title={`Download ${row.newChampion}.py`}
+            >
+              .py↓
+            </a>
+          </span>
         )}
       </td>
 

@@ -8,10 +8,11 @@ import asyncio
 import inspect
 import json
 import logging
+import re
 from datetime import datetime
 
 from cubist.agents.builder import build_engine, validate_engine
-from cubist.agents.strategist import propose_questions
+from cubist.agents.strategist import CATEGORIES, propose_questions
 from cubist.api.websocket import bus
 from cubist.config import settings
 from cubist.engines.base import Engine
@@ -28,9 +29,55 @@ from cubist.tournament.selection import select_top_n
 
 log = logging.getLogger("cubist.orchestration")
 
+# Mirrors builder.py's engine_name format: ``gen{N}-{category}-{6 char sha1}``.
+# Used to recover which category produced a promotion when looking up the
+# question that produced the current champion.
+_WINNING_CATEGORY_RE = re.compile(
+    r"^gen\d+-(" + "|".join(CATEGORIES) + r")-"
+)
+
 
 def _read_source(engine: Engine) -> str:
     return inspect.getsource(type(engine))
+
+
+def _champion_question(before_generation: int) -> dict | None:
+    """Return the strategist question that produced the current champion.
+
+    Queries the most recent prior generation that promoted (champion_after
+    differs from champion_before), parses the winning category from the
+    new champion's name, and returns the matching question from that
+    generation's strategist questions. ``None`` when no prior promotion
+    exists (champion is still the baseline) or the name doesn't conform
+    to the ``gen{N}-{cat}-{hash}`` format.
+    """
+    if before_generation <= 1:
+        return None
+    with get_session() as s:
+        from sqlmodel import select
+
+        rows = s.exec(
+            select(GenerationRow)
+            .where(GenerationRow.number < before_generation)
+            .order_by(GenerationRow.number.desc())
+        ).all()
+
+    for r in rows:
+        if r.champion_after == r.champion_before:
+            continue
+        m = _WINNING_CATEGORY_RE.match(r.champion_after)
+        if not m:
+            return None
+        cat = m.group(1)
+        try:
+            questions = json.loads(r.strategist_questions_json)
+        except (TypeError, ValueError):
+            return None
+        for q in questions:
+            if q.get("category") == cat:
+                return {"category": cat, "text": q.get("text", "")}
+        return None
+    return None
 
 
 async def run_generation(
@@ -137,9 +184,13 @@ async def run_generation(
         return_exceptions=True,
     )
 
-    candidates: list[Engine] = []
-    candidate_paths: dict[str, str] = {}
-    for q, p in zip(questions, paths):
+    # Smoke-validate every built candidate concurrently. Each smoke game
+    # has its own 60s wall-clock cap inside ``validate_engine``; running
+    # them serially makes the worst case 4×60s = 4 minutes of dead time
+    # before the tournament can start. Each task emits its own
+    # ``builder.completed`` event the moment its smoke finishes, so the
+    # dashboard still sees results stream in (not batched at the end).
+    async def _validate_one(q, p):
         if isinstance(p, Exception):
             log.error(
                 "build_engine raised q=%d category=%s err=%r",
@@ -154,7 +205,7 @@ async def run_generation(
                     "error": str(p),
                 }
             )
-            continue
+            return None
         ok, err = await validate_engine(p)
         # ``p.stem`` is the safe filename (underscored: gen1_book_abc).
         # ``engine.name`` and game.finished.white/black use the hyphenated
@@ -177,10 +228,23 @@ async def run_generation(
                 "error": err,
             }
         )
-        if ok:
-            eng = load_engine(str(p))
-            candidate_paths[eng.name] = str(p.resolve())
-            candidates.append(eng)
+        if not ok:
+            return None
+        eng = load_engine(str(p))
+        return eng, str(p.resolve())
+
+    validated = await asyncio.gather(
+        *(_validate_one(q, p) for q, p in zip(questions, paths))
+    )
+
+    candidates: list[Engine] = []
+    candidate_paths: dict[str, str] = {}
+    for r in validated:
+        if r is None:
+            continue
+        eng, resolved_path = r
+        candidate_paths[eng.name] = resolved_path
+        candidates.append(eng)
 
     # If every candidate fell through, ``round_robin([champion])`` will
     # schedule zero games (i==j filter). Surface this loudly so the

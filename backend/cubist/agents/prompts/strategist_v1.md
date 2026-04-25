@@ -35,6 +35,11 @@ CURRENT CHAMPION SOURCE (the engine you're trying to improve on):
 {champion_code}
 ```
 
+CHAMPION'S ORIGINATING QUESTION (the strategist question whose answer
+produced the source above — "(none)" if the champion is the baseline):
+
+{champion_question}
+
 PREVIOUS-GEN RUNNER-UP SOURCE (also surviving into this generation —
 it lost the round-robin to the champion above but is still strong
 enough to compete; useful to compare what each one does well):
