@@ -12,16 +12,16 @@ A self-improving chess engine that evolves its own scaffolding via agentic tourn
 
 ## Overview
 
-Darwin asks an LLM to write a chess engine, then asks another LLM how to make it better, then asks more LLMs to act on those suggestions, then plays the resulting candidates in a round-robin to decide who survives. Each pass through that pipeline is a **generation**. The next generation starts from the previous generation's winner (and runner-up).
+Darwin is survival-of-the-fittest for chess engines. Each **generation** spawns a handful of variations of the current champion, plays them all against each other in a round-robin tournament, and crowns the best as the new champion that the next generation will mutate. Run it long enough the engine improves over time, with each champion descended from the last.
 
-Roles each generation:
+What happens inside one generation:
 
-1. **Strategist** — proposes concrete improvement directions for the reigning champion.
-2. **Builders (in parallel)** — each builder agent receives one question and emits a complete Python module satisfying the `Engine` Protocol.
-3. **Validator** — static-source gates plus a smoke game vs `RandomEngine`. Anything that crashes, times out, or returns illegal moves never reaches the tournament.
-4. **Tournament** — round-robin of survivors plus the previous champion + runner-up. Promotion is by tournament-wide **win rate** with random tiebreak.
+1. **Propose.** The reigning champion's source is read, and a few concrete improvement directions are generated for it (different angles each time — opening books, search, prompt tweaks, position evaluation, sampling).
+2. **Mutate, in parallel.** Each direction is turned into a full candidate engine — a real Python module subclassing the `Engine` Protocol. Critique-and-revise pass before validation.
+3. **Cull.** Static gates + a smoke game vs `RandomEngine` reject anything that crashes, times out, or plays illegal moves. Nothing broken reaches the arena.
+4. **Tournament.** Round-robin of the survivors plus the previous champion and runner-up. Top-2 by win rate (random tiebreak) advance — the runner-up keeps the lineage from collapsing onto a single line of descent.
 
-The dashboard streams every move, every strategist question, every bracket result, and every Elo update over a WebSocket so you can watch a generation unfold in real time. A second branch — [`docs/experiment-pure-code.md`](./docs/experiment-pure-code.md) — flips the design so the LLM *writes* a classical alpha-beta engine that plays without any LLM at runtime.
+The dashboard streams every move, every proposed direction, every bracket result, and every Elo update over a WebSocket, so you can watch a generation unfold in real time. A second branch — [`docs/experiment-pure-code.md`](./docs/experiment-pure-code.md) — flips the design so the candidate is a *classical* alpha-beta engine that runs with no model in the loop at game time.
 
 For deeper reading: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), [`docs/PROCESS.md`](./docs/PROCESS.md), [`plans/`](./plans/), [`docs/SHORTCOMINGS.md`](./docs/SHORTCOMINGS.md).
 
@@ -91,4 +91,4 @@ At minimum: `ANTHROPIC_API_KEY` (or `GOOGLE_API_KEY` if `LLM_PROVIDER=gemini`). 
 
 ## Development process
 
-Five engineers, one weekend hackathon, five branches in parallel. Plans live in [`plans/`](./plans/); the canonical workflow doc is [`docs/PROCESS.md`](./docs/PROCESS.md).
+We parallelized the workload across each other — see [`docs/PROCESS.md`](./docs/PROCESS.md) and [`plans/`](./plans/) for details.
