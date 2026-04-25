@@ -125,13 +125,11 @@ REQUIRED_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         "engine has no `async def select_move(self, board, time_remaining_ms)` — "
         "referee will await select_move and crash on a non-coroutine return",
     ),
-    (
-        "llm_call",
-        re.compile(r"\bcomplete(?:_text)?\s*\("),
-        "engine never calls `complete(...)` or `complete_text(...)` — "
-        "this candidate would not actually use the LLM, so promoting it "
-        "would be a regression vs the baseline",
-    ),
+    # EXPERIMENT (branch only): llm_call requirement dropped. We now allow
+    # candidates that don't call the LLM at runtime — i.e. pure-Python
+    # chess engines (alpha-beta, evaluation heuristics, MCTS, etc.) that
+    # the LLM *wrote* but that play independently. Vastly faster (~ms
+    # per move vs ~1s) and no quota at play time.
 ]
 
 # Terminations that the validator rejects. The previous version only
@@ -283,9 +281,8 @@ def _static_check_source(source: str) -> str | None:
     bogus = _check_hallucinated_chess_attrs(source)
     if bogus is not None:
         return f"chess_attrs: {bogus}"
-    slow = _check_llm_call_in_loop(source)
-    if slow is not None:
-        return f"slow_pattern: {slow}"
+    # llm-call-in-loop check disabled on this experimental branch — engines
+    # are allowed (encouraged) to skip the LLM at play time entirely.
     return None
 
 

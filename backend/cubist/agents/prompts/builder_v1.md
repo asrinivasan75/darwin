@@ -1,5 +1,13 @@
-You are a chess engine builder. Modify the champion source below to
-answer ONE specific improvement question.
+You are a chess engine builder. Write a complete, self-contained
+**classical chess engine in pure Python** that answers ONE specific
+improvement question. Your engine plays without consulting any LLM at
+runtime — every move is decided by the Python code you write. Speed
+matters: each `select_move` call should return in well under a second.
+
+Typical building blocks: piece-square tables, mobility counts, simple
+material evaluation, alpha-beta search with a depth of 2–4 plies, basic
+quiescence (capture extensions), opening-move heuristics, etc. Pick the
+techniques that fit your specific question's category.
 
 QUESTION (category={category}):
 {question_text}
@@ -37,10 +45,11 @@ REQUIREMENTS
     MUST be exactly that — `async def`, three params named
     `self, board, time_remaining_ms`. The validator regex matches that
     exact shape; a non-async `def` or a renamed parameter is rejected.
-  - `select_move` MUST call `complete_text(...)` (or `complete(...)`)
-    at least once — the whole point of an LLM engine is to consult the
-    LLM. An engine that only reads `board` and returns a heuristic move
-    is not a valid candidate; the validator rejects it.
+  - `select_move` is **pure Python** — DO NOT call `complete(...)`
+    or `complete_text(...)`. The engine must decide moves entirely
+    from `board.legal_moves` and your own evaluation/search code.
+    `await asyncio.sleep(0)` once at the top of select_move is fine
+    if you want to be a polite asyncio citizen, but no LLM calls.
   - The module MUST end with the literal line: `engine = YourEngineClass()`
     (registry imports this top-level symbol). Without it `load_engine`
     raises `AttributeError` and the candidate is dropped.
@@ -50,7 +59,8 @@ REQUIREMENTS
         - `chess`            (python-chess move generator + board)
         - `cubist.config`    (settings)
         - `cubist.engines.base`  (BaseLLMEngine, Engine)
-        - `cubist.llm`       (complete, complete_text)
+        - You do NOT need `cubist.llm` — the new contract forbids LLM calls
+          at play time.
     Anything else — including `subprocess`, `os.system`, `socket`,
     `eval`, `exec`, `importlib`, network libraries — is forbidden and
     will be rejected by a regex backstop.
@@ -109,8 +119,8 @@ Walk through this list mentally before calling `submit_engine`:
 
   - [ ] Source has `async def select_move(self, board, time_remaining_ms)`
         — exact spelling, async on the def line.
-  - [ ] Source body of `select_move` calls `complete_text(...)` (or
-        `complete(...)`) at least once.
+  - [ ] `select_move` does NOT call `complete(...)` or `complete_text(...)` —
+        this is a pure-Python engine.
   - [ ] Source has the line `engine = YourEngineClass()` at the bottom
         of the module.
   - [ ] Every `chess.X` reference matches a real attribute (see list
@@ -120,9 +130,9 @@ Walk through this list mentally before calling `submit_engine`:
         `httpx`, `importlib`.
   - [ ] No `from cubist import config as settings` (broken — aliases
         the module). Use `from cubist.config import settings`.
-  - [ ] `select_move` has a fallback that returns a legal move when
-        the LLM response can't be parsed (`next(iter(board.legal_moves))`
-        is the standard one).
+  - [ ] `select_move` always returns a legal move and never raises
+        — wrap risky paths in try/except and fall back to
+        `next(iter(board.legal_moves))`.
 
 ## Worked minimal example (illustrative — your engine should differ)
 
@@ -130,8 +140,11 @@ Walk through this list mentally before calling `submit_engine`:
 import chess
 
 from cubist.engines.base import BaseLLMEngine
-from cubist.llm import complete_text
-from cubist.config import settings
+
+PIECE_VALUES = {{
+    chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
+    chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 0,
+}}
 
 
 class CandidateEngine(BaseLLMEngine):
@@ -142,16 +155,26 @@ class CandidateEngine(BaseLLMEngine):
             lineage=["{champion_name}"],
         )
 
+    def _eval(self, board: chess.Board) -> int:
+        score = 0
+        for pt, v in PIECE_VALUES.items():
+            score += v * len(board.pieces(pt, chess.WHITE))
+            score -= v * len(board.pieces(pt, chess.BLACK))
+        return score if board.turn == chess.WHITE else -score
+
     async def select_move(self, board, time_remaining_ms):
-        legal = [board.san(m) for m in board.legal_moves]
         try:
-            text = await complete_text(
-                settings.player_model,
-                "You are a chess engine. Reply with one SAN move.",
-                f"FEN: {{board.fen()}}\nLegal: {{', '.join(legal)}}\nMove:",
-                max_tokens=10,
-            )
-            return board.parse_san(text.strip().split()[0])
+            best_move = None
+            best_score = -10**9
+            for move in board.legal_moves:
+                board.push(move)
+                # 1-ply lookahead
+                score = -self._eval(board)
+                board.pop()
+                if score > best_score:
+                    best_score = score
+                    best_move = move
+            return best_move or next(iter(board.legal_moves))
         except Exception:
             return next(iter(board.legal_moves))
 
@@ -161,7 +184,7 @@ engine = CandidateEngine()
 
 Your engine's body of `select_move` will differ depending on the
 question's category — but the *shape* (class subclass, the async
-signature, the LLM call, the trailing `engine = ...` line) MUST match.
+signature, no LLM calls, the trailing `engine = ...` line) MUST match.
 
 Submit the entire module source as a single string via the
 `submit_engine` tool.
