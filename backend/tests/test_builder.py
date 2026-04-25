@@ -316,3 +316,104 @@ def test_async_pattern_rejects_missing_param():
     """Missing `time_remaining_ms` parameter must be rejected."""
     src = "async def select_move(self, board):\n    pass\n"
     assert not _async_pattern().search(src)
+
+
+# ---------------------------------------------------------------------------
+# chess module attribute hallucination check (gen1_sampling_*: chess.NAVY;
+# gen1_evaluation_*: chess.between(...) — both real failures from a Gemini
+# generation that the prior validator only caught at module-load or smoke-game
+# time, polluting the dashboard with cryptic AttributeError noise).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_engine_rejects_chess_attribute_hallucination(
+    tmp_path, monkeypatch, question
+):
+    """Gemini wrote `chess.NAVY: 300,` in a piece-value table. Caught now."""
+    monkeypatch.setattr("cubist.agents.builder.GENERATED_DIR", tmp_path / "generated")
+    monkeypatch.setattr("cubist.agents.builder.FAILED_DIR", tmp_path / "failures")
+    bad_source = LEGAL_ENGINE_SOURCE.replace(
+        "import chess", "import chess\nPIECE_VALUES = {chess.NAVY: 300}"
+    )
+
+    async def fake_complete(**kwargs):
+        return [_fake_tool_use_block(bad_source)]
+
+    monkeypatch.setattr("cubist.agents.builder.complete", fake_complete)
+
+    with pytest.raises(ValueError, match="chess_attrs"):
+        await build_engine(
+            champion_code="x = 1",
+            champion_name="baseline-v0",
+            generation=1,
+            question=question,
+        )
+
+
+@pytest.mark.asyncio
+async def test_build_engine_rejects_nonexistent_chess_function(
+    tmp_path, monkeypatch, question
+):
+    """Genuinely hallucinated function name (caught at static phase).
+
+    Note: ``chess.between(a, b)`` IS real (2 args). When Gemini calls
+    ``chess.between(a, b, c)`` with the wrong arg count, that's a TypeError
+    at runtime — caught by the smoke-game phase, not static. This test uses
+    ``chess.distance`` which doesn't exist at all, so the static check
+    is what fires.
+    """
+    monkeypatch.setattr("cubist.agents.builder.GENERATED_DIR", tmp_path / "generated")
+    monkeypatch.setattr("cubist.agents.builder.FAILED_DIR", tmp_path / "failures")
+    bad_source = LEGAL_ENGINE_SOURCE.replace(
+        "return next(iter(board.legal_moves))",
+        "x = chess.distance(0, 5)\n            return next(iter(board.legal_moves))",
+    )
+
+    async def fake_complete(**kwargs):
+        return [_fake_tool_use_block(bad_source)]
+
+    monkeypatch.setattr("cubist.agents.builder.complete", fake_complete)
+
+    with pytest.raises(ValueError, match="chess_attrs"):
+        await build_engine(
+            champion_code="x = 1",
+            champion_name="baseline-v0",
+            generation=1,
+            question=question,
+        )
+
+
+def test_chess_attribute_check_accepts_real_attrs():
+    """Sanity: every chess.X reference that's real must NOT be flagged."""
+    from cubist.agents.builder import _check_hallucinated_chess_attrs
+
+    real_source = (
+        "import chess\n"
+        "x = chess.PAWN\n"
+        "y = chess.KNIGHT\n"
+        "z = chess.WHITE\n"
+        "a = chess.Board()\n"
+        "b = chess.Move.from_uci('e2e4')\n"
+        "c = chess.SQUARES\n"
+        "d = chess.square(0, 0)\n"
+        "e = chess.square_file(0)\n"
+        "f = chess.A1\n"
+    )
+    assert _check_hallucinated_chess_attrs(real_source) is None
+
+
+def test_chess_attribute_check_flags_hallucinations():
+    """The real Gemini failure was chess.NAVY (a piece-type confusion).
+
+    chess.between IS a real function (with 2 args) so it does not trip
+    the static gate; that case shows up as a runtime TypeError caught
+    by the smoke-game phase.
+    """
+    from cubist.agents.builder import _check_hallucinated_chess_attrs
+
+    src = "import chess\nx = chess.NAVY\ny = chess.distance(0, 5)\n"
+    reason = _check_hallucinated_chess_attrs(src)
+    assert reason is not None
+    assert "NAVY" in reason
+    assert "distance" in reason

@@ -42,6 +42,8 @@ import logging
 import re
 from pathlib import Path
 
+import chess
+
 from cubist.agents.strategist import Question
 from cubist.config import settings
 from cubist.llm import complete
@@ -137,6 +139,50 @@ REQUIRED_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
 REJECT_TERMINATIONS = frozenset({"error", "illegal_move", "time"})
 
 
+# Valid python-chess module attributes — discovered at module load via
+# ``dir(chess)``. We use this to catch builder hallucinations like
+# ``chess.NAVY`` (should be chess.KNIGHT) or ``chess.between(...)``
+# (function that doesn't exist) BEFORE the engine module is loaded —
+# otherwise the failure is just an AttributeError on engine import or,
+# worse, mid-game during the smoke run.
+_VALID_CHESS_ATTRS = frozenset(dir(chess))
+
+# ``chess.<NAME>`` references in source. We only care about the first
+# attribute lookup (``chess.X``); deeper accesses (``chess.X.Y``) are
+# resolved at runtime by Python and not relevant to the static check.
+_CHESS_REF_RE = re.compile(r"\bchess\.([A-Za-z_]\w*)")
+
+
+def _check_hallucinated_chess_attrs(source: str) -> str | None:
+    """Detect ``chess.<NAME>`` references where ``<NAME>`` is not a real
+    attribute of the python-chess module.
+
+    Examples this catches:
+      - ``chess.NAVY`` (should be ``chess.KNIGHT``)
+      - ``chess.between(a, b, c)`` — function doesn't exist; the
+        canonical helper is ``chess.SquareSet.between(a, b)``
+      - ``chess.distance`` — doesn't exist
+      - ``chess.legal_uci_moves`` — doesn't exist (it's a method on
+        ``board.legal_moves``)
+
+    The check inspects ``dir(chess)`` at module-load time so it picks up
+    anything python-chess ships, including dynamically-added attributes.
+    Any mismatch is reported with the offending name(s) so the
+    rejection log line is actionable.
+    """
+    used = set(_CHESS_REF_RE.findall(source))
+    bogus = sorted(used - _VALID_CHESS_ATTRS)
+    if bogus:
+        return (
+            f"hallucinated chess module attribute(s) {bogus} — these names "
+            f"do not exist in python-chess. Common confusions: chess.NAVY → "
+            f"chess.KNIGHT; chess.between(...) → not a function; "
+            f"chess.distance → not a function. Use only attributes that "
+            f"exist on the real `chess` module."
+        )
+    return None
+
+
 def _static_check_source(source: str) -> str | None:
     """Run all static gates against ``source``. Return reason on failure."""
     if FORBIDDEN.search(source):
@@ -144,6 +190,9 @@ def _static_check_source(source: str) -> str | None:
     for name, pattern, reason in REQUIRED_PATTERNS:
         if not pattern.search(source):
             return f"{name}: {reason}"
+    bogus = _check_hallucinated_chess_attrs(source)
+    if bogus is not None:
+        return f"chess_attrs: {bogus}"
     return None
 
 

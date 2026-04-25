@@ -49,6 +49,48 @@ REQUIREMENTS
   - Keep the answer focused on the question's category — don't pile on
     orthogonal changes. One concept per builder run.
 
+## python-chess attributes you may use
+
+Use ONLY these names from the `chess` module. **Do not invent
+attributes** — the validator rejects any `chess.X` reference where `X`
+is not in the real `dir(chess)`.
+
+  Piece types (use these constants for material values):
+    chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK,
+    chess.QUEEN, chess.KING
+
+  Colors (use these for board.turn comparisons):
+    chess.WHITE, chess.BLACK
+
+  Squares (a1..h8, all 64 are direct attributes):
+    chess.A1, chess.A2, ..., chess.H8        # indices 0..63
+    chess.SQUARES                              # iterable of all 64
+    chess.square(file, rank)                   # build a square
+    chess.square_file(sq), chess.square_rank(sq)
+    chess.square_name(sq)
+
+  Classes:
+    chess.Board, chess.Move, chess.Piece, chess.SquareSet
+
+  Move construction:
+    chess.Move.from_uci("e2e4"), chess.Move.null()
+
+  Common Board methods (call as `board.X(...)`):
+    board.legal_moves, board.fen(), board.turn, board.push(move),
+    board.pop(), board.parse_san(text), board.san(move),
+    board.piece_at(sq), board.king(color), board.is_checkmate(),
+    board.is_stalemate(), board.is_game_over(claim_draw=True),
+    board.is_capture(move), board.is_check(),
+    board.attackers(color, sq), board.is_attacked_by(color, sq),
+    board.copy(), board.pieces(piece_type, color)
+
+Common HALLUCINATIONS the validator rejects up front:
+  chess.NAVY               # → use chess.KNIGHT
+  chess.between(a, b, c)   # function doesn't exist
+  chess.distance(a, b)     # function doesn't exist
+  chess.square_on_board    # not a function
+  board.legal_uci_moves    # not a method
+
 ## Checklist before you submit
 
 The validator will reject your engine if any of these is missing.
@@ -60,6 +102,8 @@ Walk through this list mentally before calling `submit_engine`:
         `complete(...)`) at least once.
   - [ ] Source has the line `engine = YourEngineClass()` at the bottom
         of the module.
+  - [ ] Every `chess.X` reference matches a real attribute (see list
+        above). Don't write `chess.NAVY`, `chess.between`, etc.
   - [ ] No imports from outside the allowlist; no `subprocess`,
         `os.system`, `eval(`, `exec(`, `socket`, `urllib`, `requests`,
         `httpx`, `importlib`.
