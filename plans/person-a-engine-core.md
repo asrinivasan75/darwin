@@ -2,16 +2,13 @@
 
 **Branch:** `feat/engine-core`
 
-You own the abstraction every other workstream depends on. Get the contract right and ship a working baseline early — everyone else is blocked on you to test their integration paths.
+## Goal
 
-## Read first
+Own the abstraction every other workstream depends on: get the Engine contract right and ship a working baseline early. Everyone else is blocked on you to test their integration paths.
 
-1. `docs/proposal.pdf` — the whole project, 9 pages.
-2. `plans/README.md` — the merge order and frozen contracts.
-3. `backend/darwin/engines/base.py` — the Engine Protocol you'll build against (already complete).
-4. `backend/darwin/llm.py` — the shared Anthropic helper you'll call (already complete).
+## Scope
 
-## Files you own
+Files owned:
 
 ```
 backend/darwin/engines/
@@ -24,14 +21,25 @@ backend/tests/test_baseline.py   # CREATE
 backend/tests/test_registry.py   # CREATE
 ```
 
-## What's already done for you
+Read first:
+
+1. `docs/proposal.pdf` — the whole project, 9 pages.
+2. `plans/README.md` — the merge order and frozen contracts.
+3. `backend/darwin/engines/base.py` — the Engine Protocol you'll build against (already complete).
+4. `backend/darwin/llm.py` — the shared Anthropic helper you'll call (already complete).
+
+Already done for you:
 
 - `base.py`: Engine Protocol + `BaseLLMEngine` helper class.
-- `random_engine.py`: `RandomEngine` — a working engine that picks a random legal move. B and C will use it for testing; you don't need to touch it.
-- `llm.py`: `complete()` and `complete_text()` async helpers around Anthropic with semaphore + retry. Use these — do not call the SDK directly.
+- `random_engine.py`: `RandomEngine` — picks a random legal move.
+- `llm.py`: `complete()` and `complete_text()` async helpers around Anthropic with semaphore + retry.
 - `baseline.py` and `registry.py` have stub signatures with `NotImplementedError`.
 
-## Step-by-step (do these in order)
+## Frozen contracts touched
+
+- **Engine Protocol** — `backend/darwin/engines/base.py`. You consume it; do not modify after it lands.
+
+## Deliverables
 
 ### Step 1 — Branch and verify the env
 
@@ -176,10 +184,7 @@ async def test_baseline_returns_legal_move():
     assert move in board.legal_moves
 ```
 
-Run them:
-```bash
-uv run pytest tests/ -v
-```
+Run them: `uv run pytest tests/ -v`.
 
 ### Step 5 — End-to-end self-play smoke test
 
@@ -211,21 +216,25 @@ gh pr create --title "Engine core + baseline" --body "Closes plan A. Unblocks B 
 
 Page Person B and C in chat: "engine-core merged."
 
-## Definition of done
+### Integration points
+
+- **Person B** imports `Engine` and calls `select_move` from `referee.py`. Also uses `RandomEngine` in tests.
+- **Person C**'s builder writes modules to `generated/`; **you** load them via `registry.load_engine`. Also uses `RandomEngine` in the validator.
+- **Person E** seeds the DB with the baseline by calling `BaselineEngine()` and storing its module dotted path.
+
+## Acceptance criteria
 
 - [ ] Step 2 verification command prints a legal move.
 - [ ] All four tests in Step 4 pass.
 - [ ] `smoke_self_play.py` plays 10 moves without crashing.
 - [ ] PR opened, then merged after review.
 
-## Integration points
-
-- **Person B** imports `Engine` and calls `select_move` from `referee.py`. Also uses `RandomEngine` in tests.
-- **Person C**'s builder writes modules to `generated/`; **you** load them via `registry.load_engine`. Also uses `RandomEngine` in the validator.
-- **Person E** seeds the DB with the baseline by calling `BaselineEngine()` and storing its module dotted path.
-
-## Watch out for
+## Risks & mitigations
 
 - **Don't change `base.py` once it's landed.** Other people are mocking against it. If you absolutely need to, page the team.
 - **Illegal-move parsing.** Always have a fallback (the `next(iter(board.legal_moves))` line) so a malformed LLM response doesn't crash a game.
 - **Don't import `anthropic` directly.** Always go through `darwin.llm` so we have one rate-limit choke point.
+
+## Status
+
+Merged.

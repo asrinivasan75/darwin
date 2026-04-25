@@ -2,17 +2,13 @@
 
 **Branch:** `feat/tournament`
 
-You make engines fight each other. Your code is the load-bearing piece for the whole pipeline — if a single tournament can't finish in under 90 minutes we don't get 3 generations done. Parallelism is non-negotiable.
+## Goal
 
-## Read first
+Make engines fight each other. This is the load-bearing piece for the whole pipeline — if a single tournament can't finish in under 90 minutes the demo can't show 3 generations. Parallelism is non-negotiable.
 
-1. `docs/proposal.pdf` — focus on §3 (Approach) and §9 (Risks).
-2. `plans/README.md` — merge order.
-3. `backend/darwin/engines/base.py` — the Engine Protocol you call into.
-4. `backend/darwin/engines/random_engine.py` — your day-one test partner before A merges baseline.
-5. `backend/darwin/api/websocket.py` — the event payloads you'll emit through E's bus.
+## Scope
 
-## Files you own
+Files owned:
 
 ```
 backend/darwin/tournament/
@@ -27,13 +23,26 @@ backend/tests/test_elo.py        # CREATE
 backend/tests/test_selection.py  # CREATE
 ```
 
-## What's already done for you
+Read first:
+
+1. `docs/proposal.pdf` — focus on §3 (Approach) and §9 (Risks).
+2. `plans/README.md` — merge order.
+3. `backend/darwin/engines/base.py` — the Engine Protocol you call into.
+4. `backend/darwin/engines/random_engine.py` — your day-one test partner before A merges baseline.
+5. `backend/darwin/api/websocket.py` — the event payloads you'll emit through E's bus.
+
+Already done for you:
 
 - All four module files have stubs with the right function signatures and dataclass returns.
 - `RandomEngine` exists in `darwin.engines.random_engine` — use it for every test so you don't burn API budget.
 - The `GameResult` and `Standings` dataclasses are already defined.
 
-## Step-by-step (do these in order)
+## Frozen contracts touched
+
+- **Engine Protocol** — `backend/darwin/engines/base.py`. Consumed via `Engine.select_move`.
+- **WebSocket events** — `backend/darwin/api/websocket.py`. You emit `game.move` / `game.finished` shapes via the `on_event` callback, but never modify the schema.
+
+## Deliverables
 
 ### Step 1 — Branch and verify
 
@@ -318,21 +327,25 @@ git push -u origin feat/tournament
 gh pr create --title "Tournament" --body "Closes plan B."
 ```
 
-## Definition of done
-
-- [ ] All four test files pass: `uv run pytest tests/`.
-- [ ] `eval_match.py` runs a 4-game match between two `RandomEngine`s and prints a clean table.
-- [ ] PR opened, then merged after review.
-
-## Integration points
+### Integration points
 
 - **Person A** provides `Engine`, `BaselineEngine`, `RandomEngine`. You depend only on `RandomEngine` until they merge.
 - **Person E** passes a real `bus.emit` as the `on_event` argument to `round_robin`. Your code already accepts it as optional, so it Just Works.
 - **Person C**'s validator imports `play_game` for its smoke test.
 
-## Watch out for
+## Acceptance criteria
+
+- [ ] All four test files pass: `uv run pytest tests/`.
+- [ ] `eval_match.py` runs a 4-game match between two `RandomEngine`s and prints a clean table.
+- [ ] PR opened, then merged after review.
+
+## Risks & mitigations
 
 - **One slow game blocks `gather`.** The `asyncio.wait_for` per move + `max_moves_per_game` cap are both required.
 - **Both colors per pairing** — the `i == j` skip plus iterating both `(i,j)` and `(j,i)` gives this for free.
 - **Draws are common with weak engines.** `claim_draw=True` and the 50-move rule are handled by `python-chess` for free if you call `is_game_over(claim_draw=True)`.
 - **Don't print inside `play_game`.** Use `on_event` instead. Print in tests via pytest's `-s`.
+
+## Status
+
+Merged. Note: post-hackathon the head-to-head selection gate was replaced by win-rate-based `select_top_n` (see [README.md](../README.md)) and the round-robin gained a `max_parallel_games` semaphore (see [followup-1-tournament-concurrency.md](followup-1-tournament-concurrency.md)).

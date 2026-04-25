@@ -2,18 +2,13 @@
 
 **Branch:** `feat/infra`
 
-You're the integrator. You own the database, the API, the WebSocket bus, the top-level loop that calls everyone else's code, the shared LLM helper, and the demo. The other four people produce parts; you make the machine run.
+## Goal
 
-## Read first
+Be the integrator. Own the database, the API, the WebSocket bus, the top-level loop that calls everyone else's code, the shared LLM helper, and the demo. The other four people produce parts; you make the machine run.
 
-1. `docs/proposal.pdf` — the whole document, but especially §11 (Demo Plan).
-2. `plans/README.md` — merge order.
-3. All four other plans — you integrate against them, so know their shapes.
-4. `backend/darwin/storage/models.py` — the **frozen** schema you persist to.
-5. `backend/darwin/api/websocket.py` — the **frozen** event payloads you broadcast.
-6. `backend/darwin/llm.py` — the shared Anthropic helper (you own this; basic version already works).
+## Scope
 
-## Files you own
+Files owned:
 
 ```
 backend/darwin/
@@ -35,7 +30,16 @@ scripts/
 Procfile                       # done
 ```
 
-## What's already done for you
+Read first:
+
+1. `docs/proposal.pdf` — the whole document, but especially §11 (Demo Plan).
+2. `plans/README.md` — merge order.
+3. All four other plans — you integrate against them, so know their shapes.
+4. `backend/darwin/storage/models.py` — the **frozen** schema you persist to.
+5. `backend/darwin/api/websocket.py` — the **frozen** event payloads you broadcast.
+6. `backend/darwin/llm.py` — the shared Anthropic helper (you own this; basic version already works).
+
+Already done for you:
 
 - `config.py` reads `.env` into `Settings` (key, model IDs, time controls).
 - `llm.py` provides `complete()` and `complete_text()` with semaphore + retry.
@@ -45,7 +49,12 @@ Procfile                       # done
 - `api/server.py` is a hello-world FastAPI app with `/api/health`.
 - `Procfile` runs backend + frontend together via `honcho start`.
 
-## Step-by-step (do these in order)
+## Frozen contracts touched
+
+- **DB schema** — `backend/darwin/storage/models.py`. You write to it; do not modify.
+- **WebSocket events** — `backend/darwin/api/websocket.py`. You emit through `bus`; do not modify the event types.
+
+## Deliverables
 
 ### Step 1 — Branch and verify
 
@@ -326,7 +335,14 @@ git push -u origin feat/infra
 gh pr create --title "Infra + orchestration" --body "Closes plan E."
 ```
 
-## Definition of done
+### Integration points
+
+- **Person A** provides `BaselineEngine`, `Engine` Protocol, `load_engine`. You instantiate baseline at seed time.
+- **Person B** provides `round_robin`, `select_champion`, `play_game`. Pass `bus.emit` as `on_event`.
+- **Person C** provides `propose_questions`, `build_engine`, `validate_engine`. They ship stubs early; you can wire end-to-end immediately.
+- **Person D** consumes `/ws`. Validate event payloads against their `events.ts` mirror as soon as you start.
+
+## Acceptance criteria
 
 - [ ] `/api/health`, `/api/engines`, `/api/generations`, `/api/games`, `/ws` all respond.
 - [ ] `seed_baseline.py` is idempotent and inserts the baseline row.
@@ -335,16 +351,13 @@ gh pr create --title "Infra + orchestration" --body "Closes plan E."
 - [ ] Replay mode works without API access (demo insurance).
 - [ ] PR opened, then merged after review.
 
-## Integration points
-
-- **Person A** provides `BaselineEngine`, `Engine` Protocol, `load_engine`. You instantiate baseline at seed time.
-- **Person B** provides `round_robin`, `select_champion`, `play_game`. Pass `bus.emit` as `on_event`.
-- **Person C** provides `propose_questions`, `build_engine`, `validate_engine`. They ship stubs early; you can wire end-to-end immediately.
-- **Person D** consumes `/ws`. Validate event payloads against their `events.ts` mirror as soon as you start.
-
-## Watch out for
+## Risks & mitigations
 
 - **You are the rate-limit choke point.** The semaphore in `llm.py` (currently 30) controls everyone. Tune it down if you see 429s, up if the tournament drags.
 - **WS backpressure.** Slow frontend → queue fills → events drop. The `put_nowait` + drop policy is intentional.
 - **Crash recovery.** If a generation crashes mid-tournament, a `GenerationRow` with `finished_at=NULL` is left behind. For the hackathon, just resume from the next generation number.
 - **Demo day.** Step 8 (replay mode) is the **single most important risk mitigation**. Do not skip it.
+
+## Status
+
+Merged. Note: post-hackathon `run_generation_task` was extended to load the reigning champion + runner-up from the DB instead of always restarting from baseline (see [followup-3-champion-resume.md](followup-3-champion-resume.md)), and the orchestrator gained cancel/replace semantics for the Run/Stop buttons.

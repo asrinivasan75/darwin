@@ -2,18 +2,13 @@
 
 **Branch:** `feat/agents`
 
-You build the brain of the self-improvement loop: the agent that decides *what to try* and the agent that *writes the code*. The demo's wow-factor comes from your strategist's reasoning being legible — make it good prose, not just JSON.
+## Goal
 
-## Read first
+Build the brain of the self-improvement loop: the agent that decides *what to try* and the agent that *writes the code*. The demo's wow-factor comes from the strategist's reasoning being legible — make it good prose, not just JSON.
 
-1. `docs/proposal.pdf` — focus on §3.1 (Three Roles) and §9 (Risks).
-2. `plans/README.md` — merge order and frozen contracts.
-3. `backend/darwin/engines/base.py` — the Protocol that builder output must satisfy.
-4. `backend/darwin/llm.py` — the shared Anthropic helper. Use `complete()` (with `tools=`) for both agents.
-5. `backend/darwin/engines/random_engine.py` — your validator's sparring partner.
-6. `backend/darwin/engines/baseline.py` — read this once Person A merges it; this is what your builder will be modifying.
+## Scope
 
-## Files you own
+Files owned:
 
 ```
 backend/darwin/agents/
@@ -26,13 +21,26 @@ backend/tests/test_strategist.py   # CREATE
 backend/tests/test_builder.py      # CREATE
 ```
 
-## What's already done for you
+Read first:
+
+1. `docs/proposal.pdf` — focus on §3.1 (Three Roles) and §9 (Risks).
+2. `plans/README.md` — merge order and frozen contracts.
+3. `backend/darwin/engines/base.py` — the Protocol that builder output must satisfy.
+4. `backend/darwin/llm.py` — the shared Anthropic helper. Use `complete()` (with `tools=`) for both agents.
+5. `backend/darwin/engines/random_engine.py` — your validator's sparring partner.
+6. `backend/darwin/engines/baseline.py` — read this once Person A merges it; this is what your builder will be modifying.
+
+Already done for you:
 
 - `strategist.py` and `builder.py` have stubs with the right function signatures and `Question` dataclass.
 - `darwin.llm.complete()` handles auth, semaphore, retry, and tool-use. Pass it `tools=[...]` and read the `tool_use` block from the returned `content`.
 - `RandomEngine` exists for your validator's smoke games.
 
-## Step-by-step (do these in order)
+## Frozen contracts touched
+
+- **Engine Protocol** — `backend/darwin/engines/base.py`. Builder output must satisfy it; do not modify.
+
+## Deliverables
 
 ### Step 1 — Branch and verify
 
@@ -275,24 +283,28 @@ git push -u origin feat/agents
 gh pr create --title "Agents" --body "Closes plan C."
 ```
 
-## Definition of done
-
-- [ ] Stubs (Step 2) pushed to a branch quickly so Person E unblocks.
-- [ ] Real strategist returns 2 distinct categories from a real Opus call.
-- [ ] Real builder produces an engine that validates and beats `RandomEngine` >50% in a 4-game match.
-- [ ] PR opened, then merged after review.
-
-## Integration points
+### Integration points
 
 - **Person A**'s `BaseLLMEngine` is what your builder's output subclasses. Read it before writing the prompt.
 - **Person A**'s `registry.load_engine` is what your validator calls.
 - **Person B**'s `play_game` is what your validator's smoke game uses.
 - **Person E** calls `propose_questions` once per generation, then `gather(*build_engine(...) for q in questions)`.
 
-## Watch out for
+## Acceptance criteria
+
+- [ ] Stubs (Step 2) pushed to a branch quickly so Person E unblocks.
+- [ ] Real strategist returns 2 distinct categories from a real Opus call.
+- [ ] Real builder produces an engine that validates and beats `RandomEngine` >50% in a 4-game match.
+- [ ] PR opened, then merged after review.
+
+## Risks & mitigations
 
 - **JSON schema enforcement.** Free-form text output will bite you. The `tool_use` pattern with `tools=[TOOL]` is mandatory.
 - **Builder hallucination.** The prompt MUST explicitly list allowed imports; the FORBIDDEN regex is a backstop.
 - **Sandbox concerns.** Builder code runs in our process. The regex check is the minimum bar for a hackathon.
 - **Cost control.** Strategist is Opus and gets a long champion source. If you have time, switch to Anthropic's prompt caching (mark the SYSTEM prompt as cacheable).
 - **Make questions readable.** Person D shows them verbatim. No JSON-ese in the user-facing text.
+
+## Status
+
+Merged. Note: post-hackathon the builder prompt + `FORBIDDEN` regex were tightened to reject the broken `from darwin import config as settings` pattern (see [followup-2-builder-quality.md](followup-2-builder-quality.md)).
