@@ -45,8 +45,71 @@ interface GameState {
   ply: number;
   finished: boolean;
   result: string | null;
+  termination: string | null;
   /** Index in the events array of the last update — used to sort recency. */
   last_event_idx: number;
+}
+
+// Major/minor pieces. Pawn isn't here on purpose: in SAN, pawn moves
+// have no leading piece letter (`e4`, `exd5`, `e8=Q`), so the pawn case
+// is detected by absence — see `verboseMove` below.
+const PIECE_NAMES: Record<string, string> = {
+  K: "king",
+  Q: "queen",
+  R: "rook",
+  B: "bishop",
+  N: "knight",
+};
+
+/**
+ * Convert a SAN move into a human-readable phrase.
+ *
+ * Examples:
+ *   "Rxb3+"  → "black rook takes b3"
+ *   "O-O"    → "white castles kingside"
+ *   "e4"     → "white pawn to e4"
+ *   "exd5"   → "white e-pawn takes d5"   // file disambiguates the pawn
+ *   "e8=Q"   → "white pawn to e8 and promotes to queen"
+ *
+ * Best-effort — unparseable inputs fall back to the raw SAN.
+ */
+function verboseMove(san: string, color: "white" | "black"): string {
+  if (!san) return "";
+  let s = san.replace(/[+#]$/, "");
+  if (s === "O-O" || s === "0-0") return `${color} castles kingside`;
+  if (s === "O-O-O" || s === "0-0-0") return `${color} castles queenside`;
+
+  let promotion = "";
+  const promMatch = s.match(/=([QRBN])$/);
+  if (promMatch) {
+    promotion = ` and promotes to ${PIECE_NAMES[promMatch[1]]}`;
+    s = s.replace(/=([QRBN])$/, "");
+  }
+
+  const first = s[0];
+  let piece: string;
+  if (first && first in PIECE_NAMES) {
+    piece = PIECE_NAMES[first];
+    s = s.slice(1);
+  } else {
+    // Pawn move. Pawn captures always lead with the source file
+    // (e.g. "exd5") — keep it as part of the piece name so it isn't
+    // swallowed by the disambiguation strip below.
+    if (s.length > 2 && /^[a-h]/.test(s) && s[1] === "x") {
+      piece = `${s[0]}-pawn`;
+      s = s.slice(1);
+    } else {
+      piece = "pawn";
+    }
+  }
+
+  const captures = s.includes("x");
+  s = s.replace("x", "");
+  const dest = s.slice(-2);
+  if (!/^[a-h][1-8]$/.test(dest)) return san;
+
+  const verb = captures ? "takes" : "to";
+  return `${color} ${piece} ${verb} ${dest}${promotion}`;
 }
 
 /**
@@ -83,6 +146,7 @@ export default function LiveBoards({ events }: LiveBoardsProps) {
           ply: m.ply,
           finished: prev?.finished ?? false,
           result: prev?.result ?? null,
+          termination: prev?.termination ?? null,
           last_event_idx: i,
         });
       } else if (e.type === "game.finished") {
@@ -93,6 +157,7 @@ export default function LiveBoards({ events }: LiveBoardsProps) {
             ...prev,
             finished: true,
             result: f.result,
+            termination: f.termination,
             last_event_idx: i,
           });
         } else {
@@ -107,6 +172,7 @@ export default function LiveBoards({ events }: LiveBoardsProps) {
             ply: 0,
             finished: true,
             result: f.result,
+            termination: f.termination,
             last_event_idx: i,
           });
         }
@@ -139,7 +205,7 @@ export default function LiveBoards({ events }: LiveBoardsProps) {
           Waiting for first game…
         </p>
       ) : (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="flex flex-wrap gap-4">
           {games.map((g) => (
             <BoardCard key={g.game_id} game={g} />
           ))}
@@ -156,52 +222,124 @@ interface BoardCardProps {
 }
 
 function BoardCard({ game }: BoardCardProps) {
-  const lastSan =
-    game.san_history.length > 0
-      ? game.san_history[game.san_history.length - 1]
-      : "";
+  // SAN history is in chronological order; even indices are white moves,
+  // odd are black. Reverse for display so the most recent move sits on top
+  // — keeps the latest action visible without scrolling.
+  const verboseHistory = game.san_history
+    .map((san, idx) => ({
+      idx,
+      text: verboseMove(san, idx % 2 === 0 ? "white" : "black"),
+    }))
+    .reverse();
+
+  // Bold the verdict for the outcomes operators care about most when
+  // judging a candidate engine: hallucinated/illegal moves, real
+  // checkmates, and draws (stalemate / max-moves / threefold). Other
+  // terminations (time, error) get plain styling.
+  const isHallucination = game.termination === "illegal_move";
+  const isCheckmate = game.termination === "checkmate";
+  const isDraw =
+    game.result === "1/2-1/2" ||
+    game.termination === "stalemate" ||
+    game.termination === "max_moves" ||
+    game.termination === "draw";
+  const drawLabel =
+    game.termination === "stalemate"
+      ? "Draw — stalemate"
+      : game.termination === "max_moves"
+        ? "Draw — move limit"
+        : "Draw";
+  const verdictLabel = isHallucination
+    ? "Hallucination"
+    : isCheckmate
+      ? "Checkmate"
+      : isDraw
+        ? drawLabel
+        : game.termination
+          ? game.termination.replace(/_/g, " ")
+          : null;
+
   return (
     <div
       className={`bg-gray-900 rounded p-2 flex flex-col text-xs ${
         game.finished ? "opacity-70" : ""
       }`}
+      style={{ width: 360 }}
     >
       <div className="flex items-center justify-between mb-1">
         <span className="text-gray-400 font-mono">#{game.game_id}</span>
-        {game.finished ? (
-          <span className="text-yellow-400 font-mono">{game.result}</span>
-        ) : (
-          <span className="text-gray-500 font-mono">ply {game.ply}</span>
-        )}
+        <span className="text-gray-500 font-mono">ply {game.ply}</span>
       </div>
 
-      <div className="flex items-center gap-1 truncate">
-        <span className="inline-block w-2 h-2 rounded-sm bg-gray-900 border border-gray-500 shrink-0" />
-        <span className="text-gray-300 font-mono truncate" title={game.black}>
-          {game.black}
-        </span>
-      </div>
+      {/* Two-column body: board + player labels on the left, scrollable
+          move log on the right. The right column flexes to fill the
+          remaining card width. The result chip lives at the top of the
+          right column so it sits directly above the most recent move. */}
+      <div className="flex gap-2">
+        <div className="flex flex-col shrink-0" style={{ width: 170 }}>
+          <div className="flex items-center gap-1 truncate">
+            <span className="inline-block w-2 h-2 rounded-sm bg-gray-900 border border-gray-500 shrink-0" />
+            <span
+              className="text-gray-300 font-mono truncate"
+              title={game.black}
+            >
+              {game.black}
+            </span>
+          </div>
 
-      <div className="my-1">
-        <Chessboard
-          position={game.fen === "start" ? "start" : game.fen}
-          arePiecesDraggable={false}
-          customDarkSquareStyle={{ backgroundColor: "#374151" }}
-          customLightSquareStyle={{ backgroundColor: "#9ca3af" }}
-          boardWidth={170}
-        />
-      </div>
+          <div className="my-1">
+            <Chessboard
+              position={game.fen === "start" ? "start" : game.fen}
+              arePiecesDraggable={false}
+              customDarkSquareStyle={{ backgroundColor: "#374151" }}
+              customLightSquareStyle={{ backgroundColor: "#9ca3af" }}
+              boardWidth={170}
+            />
+          </div>
 
-      <div className="flex items-center gap-1 truncate">
-        <span className="inline-block w-2 h-2 rounded-sm bg-gray-100 border border-gray-500 shrink-0" />
-        <span className="text-gray-300 font-mono truncate" title={game.white}>
-          {game.white}
-        </span>
-      </div>
+          <div className="flex items-center gap-1 truncate">
+            <span className="inline-block w-2 h-2 rounded-sm bg-gray-100 border border-gray-500 shrink-0" />
+            <span
+              className="text-gray-300 font-mono truncate"
+              title={game.white}
+            >
+              {game.white}
+            </span>
+          </div>
+        </div>
 
-      {lastSan && (
-        <div className="mt-1 text-gray-500 font-mono truncate">last: {lastSan}</div>
-      )}
+        <div className="flex-1 min-w-0 overflow-y-auto text-[10px] leading-tight text-gray-400 font-mono max-h-[200px]">
+          {game.finished && (
+            <div className="mb-0.5 flex items-baseline gap-2">
+              {verdictLabel && (
+                <span
+                  className={`font-mono ${
+                    isHallucination
+                      ? "font-bold text-red-400"
+                      : isCheckmate
+                        ? "font-bold text-yellow-300"
+                        : isDraw
+                          ? "font-bold text-sky-300"
+                          : "text-gray-400"
+                  }`}
+                >
+                  {verdictLabel}
+                </span>
+              )}
+              <span className="text-yellow-400 font-mono">{game.result}</span>
+            </div>
+          )}
+          {verboseHistory.length === 0 ? (
+            <span className="italic text-gray-600">no moves yet</span>
+          ) : (
+            verboseHistory.map(({ idx, text }) => (
+              <div key={idx} className="truncate" title={text}>
+                {idx + 1}. {text}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }
