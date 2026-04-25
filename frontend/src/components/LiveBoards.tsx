@@ -27,8 +27,13 @@ interface LiveBoardsProps {
   events: CubistEvent[];
 }
 
-/** Max number of boards rendered simultaneously. */
-const MAX_BOARDS = 6;
+// Max number of boards rendered simultaneously. With games_per_pairing=2
+// and 3 engines (baseline + 2 candidates), the round-robin schedules
+// 3*2*2 = 12 concurrent games. We render all of them so a judge can see
+// the full tournament at once. Cap is a safety net in case a future
+// config bumps the cohort to 4 candidates (4*3*2 = 24 games — at that
+// point we'd want a different layout anyway).
+const MAX_BOARDS = 12;
 
 /** Per-board state derived from the event log. */
 interface GameState {
@@ -108,10 +113,13 @@ export default function LiveBoards({ events }: LiveBoardsProps) {
       }
     }
 
-    // Most-recently-active games go first; cap at MAX_BOARDS so we don't
-    // try to render 12 boards on an iPad.
+    // Stable layout: sort by game_id ascending so each game keeps its
+    // grid slot from start to finish. A game that lands in the top-left
+    // when the tournament starts stays there until it ends — matches
+    // how a human would expect to follow a row of games on a chess
+    // tournament hall display.
     return Array.from(map.values())
-      .sort((a, b) => b.last_event_idx - a.last_event_idx)
+      .sort((a, b) => a.game_id - b.game_id)
       .slice(0, MAX_BOARDS);
   }, [events]);
 
