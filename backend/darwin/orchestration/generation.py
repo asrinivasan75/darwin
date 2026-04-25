@@ -19,7 +19,7 @@ from darwin.engines.base import Engine
 from darwin.engines.registry import load_engine
 from darwin.storage.db import get_session
 from darwin.storage.models import EngineRow, GameRow, GenerationRow
-from darwin.tournament.elo import update_elo
+from darwin.tournament.elo import update_ratings_for_games
 from darwin.tournament.runner import (
     cool_modal_pool,
     round_robin,
@@ -297,20 +297,7 @@ async def run_generation(
         ratings.setdefault(name, 1500.0)
 
     pre_ratings = dict(ratings)
-    for game in standings.games:
-        if game.result == "1-0":
-            score_a = 1.0
-        elif game.result == "0-1":
-            score_a = 0.0
-        else:
-            score_a = 0.5
-        new_w, new_b = update_elo(
-            ratings[game.white],
-            ratings[game.black],
-            score_a,
-        )
-        ratings[game.white] = new_w
-        ratings[game.black] = new_b
+    ratings = update_ratings_for_games(ratings, standings.games)
 
     # Champion's Elo delta = post-tournament Elo of the new champion
     # minus its pre-tournament Elo. For a fresh promotion this includes
