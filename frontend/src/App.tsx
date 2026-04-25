@@ -38,19 +38,44 @@ export default function App() {
   // every panel so each can derive its own view without extra state management.
   const events = useEventStream();
 
-  // Whether a generation is currently running, derived from the event log.
-  // ``generation.started`` flips this on; any of ``finished`` / ``cancelled``
-  // flips it off. We walk from the end of the array because the latest
-  // boundary event wins.
-  const isRunning = (() => {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const t = events[i].type;
-      if (t === "generation.started") return true;
-      if (t === "generation.finished" || t === "generation.cancelled") {
-        return false;
+  // Walk events once to derive everything the header needs:
+  //   - isRunning: a generation is in flight
+  //   - currentGen: the highest generation.started.number we've seen
+  //   - currentChampion: the most recent champion (from generation.finished
+  //     if present, else from generation.started.champion of the latest
+  //     generation, else null when the dashboard is fresh)
+  //   - finishedCount: number of distinct generations that have finished
+  //     promoted or not — used to label the run button "Next" vs "Run"
+  const { isRunning, currentGen, currentChampion, finishedCount } = (() => {
+    let running = false;
+    let gen: number | null = null;
+    let champion: string | null = null;
+    let finished = 0;
+    for (const e of events) {
+      if (e.type === "generation.started") {
+        running = true;
+        gen = e.number;
+        // Don't overwrite champion with the *starting* champion if the
+        // previous generation already finished and named a new winner.
+        // The starting champion is the same as last finished's
+        // new_champion in the lineage flow, so this is just a fallback
+        // for the very first generation.
+        if (champion === null) champion = e.champion;
+      } else if (e.type === "generation.finished") {
+        running = false;
+        gen = e.number;
+        champion = e.new_champion;
+        finished += 1;
+      } else if (e.type === "generation.cancelled") {
+        running = false;
       }
     }
-    return false;
+    return {
+      isRunning: running,
+      currentGen: gen,
+      currentChampion: champion,
+      finishedCount: finished,
+    };
   })();
 
   /** Cancel any running generation and start a new one. */
@@ -117,10 +142,40 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Event counter badge — useful for debugging during demo setup */}
-          <span className="text-xs text-gray-500 font-mono">
-            {events.length} events
-          </span>
+          {/* Generation tracker — current gen number + reigning champion.
+              Pulses while a generation is running so a glance tells you
+              whether to expect more events or whether the dashboard is
+              parked between rounds. */}
+          <div
+            className={`px-3 py-2 rounded text-xs font-mono ${
+              isRunning
+                ? "bg-blue-900/40 text-blue-200 animate-pulse"
+                : "bg-gray-800 text-gray-300"
+            }`}
+            title={
+              currentChampion
+                ? `Champion: ${currentChampion}`
+                : "No generations yet"
+            }
+          >
+            {currentGen !== null ? (
+              <>
+                <span className="text-gray-400">Gen </span>
+                <span className="font-bold">{currentGen}</span>
+                {currentChampion && (
+                  <>
+                    <span className="text-gray-500"> · </span>
+                    <span className="text-gray-200">{currentChampion}</span>
+                  </>
+                )}
+                {isRunning && (
+                  <span className="ml-2 text-blue-300">●</span>
+                )}
+              </>
+            ) : (
+              <span className="text-gray-500">no generations yet</span>
+            )}
+          </div>
 
           <button
             onClick={stopGeneration}
@@ -142,7 +197,11 @@ export default function App() {
             onClick={runGeneration}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-semibold rounded transition-colors"
           >
-            {isRunning ? "Restart Generation" : "Run Generation"}
+            {isRunning
+              ? "Restart Generation"
+              : finishedCount > 0
+              ? "Next Generation"
+              : "Run Generation"}
           </button>
         </div>
       </header>
