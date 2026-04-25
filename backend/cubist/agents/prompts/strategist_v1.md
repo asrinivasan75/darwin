@@ -35,6 +35,11 @@ CURRENT CHAMPION SOURCE:
 {champion_code}
 ```
 
+CHAMPION'S ORIGINATING QUESTION (the strategist question whose answer
+produced the source above — "(none)" if the champion is the baseline):
+
+{champion_question}
+
 HISTORY (prior generations, JSON):
 
 {history_json}

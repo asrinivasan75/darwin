@@ -8,10 +8,11 @@ import asyncio
 import inspect
 import json
 import logging
+import re
 from datetime import datetime
 
 from cubist.agents.builder import build_engine, validate_engine
-from cubist.agents.strategist import propose_questions
+from cubist.agents.strategist import CATEGORIES, propose_questions
 from cubist.api.websocket import bus
 from cubist.config import settings
 from cubist.engines.base import Engine
@@ -23,9 +24,84 @@ from cubist.tournament.selection import select_champion
 
 log = logging.getLogger("cubist.orchestration")
 
+# Mirrors builder.py's engine_name format: ``gen{N}-{category}-{6 char sha1}``.
+# Used to recover which category produced a promotion when summarising past
+# generations for the strategist.
+_WINNING_CATEGORY_RE = re.compile(
+    r"^gen\d+-(" + "|".join(CATEGORIES) + r")-"
+)
+
 
 def _read_source(engine: Engine) -> str:
     return inspect.getsource(type(engine))
+
+
+def _load_history(before_generation: int) -> list[dict]:
+    """Summarise prior generations for the strategist's ``{history_json}`` slot.
+
+    The strategist prompt has always had a history slot; before this it was
+    handed ``[]`` and could only reason from first principles. We return one
+    dict per prior generation with the questions that were tried, whether a
+    promotion happened, and (when it did) the category of the winning
+    candidate — derived by parsing the new champion's name, since the
+    builder embeds the category there.
+    """
+    if before_generation <= 1:
+        return []
+    with get_session() as s:
+        from sqlmodel import select
+
+        rows = s.exec(
+            select(GenerationRow)
+            .where(GenerationRow.number < before_generation)
+            .order_by(GenerationRow.number)
+        ).all()
+
+    out: list[dict] = []
+    for r in rows:
+        try:
+            questions = json.loads(r.strategist_questions_json)
+        except (TypeError, ValueError):
+            questions = []
+        promoted = r.champion_after != r.champion_before
+        winning_category: str | None = None
+        if promoted:
+            m = _WINNING_CATEGORY_RE.match(r.champion_after)
+            if m:
+                winning_category = m.group(1)
+        out.append(
+            {
+                "generation": r.number,
+                "champion_before": r.champion_before,
+                "champion_after": r.champion_after,
+                "promoted": promoted,
+                "winning_category": winning_category,
+                "questions": questions,
+            }
+        )
+    return out
+
+
+def _champion_question(history: list[dict]) -> dict | None:
+    """Return the strategist question that produced the current champion.
+
+    Walks history backwards: the most recent promoted generation is when the
+    current champion was created, and its winning_category identifies which
+    of that generation's 4 questions the champion answers. Returns ``None``
+    if no prior generation promoted (champion is still the baseline) or if
+    the winning category couldn't be recovered from the champion's name.
+    """
+    for entry in reversed(history):
+        if not entry["promoted"]:
+            continue
+        cat = entry["winning_category"]
+        if cat is None:
+            return None
+        for q in entry["questions"]:
+            if q.get("category") == cat:
+                return {"category": cat, "text": q.get("text", "")}
+        return None
+    return None
 
 
 async def run_generation(champion: Engine, generation_number: int) -> Engine:
@@ -37,7 +113,12 @@ async def run_generation(champion: Engine, generation_number: int) -> Engine:
         }
     )
 
-    questions = await propose_questions(_read_source(champion), [])
+    history = _load_history(generation_number)
+    questions = await propose_questions(
+        _read_source(champion),
+        history,
+        champion_question=_champion_question(history),
+    )
     for q in questions:
         await bus.emit(
             {

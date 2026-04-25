@@ -101,3 +101,54 @@ async def test_propose_questions_passes_history_into_prompt(monkeypatch):
 
     assert "baseline-v0" in captured["user"]
     assert "delta" in captured["user"]
+
+
+@pytest.mark.asyncio
+async def test_propose_questions_includes_champion_question(monkeypatch):
+    """When a champion_question is supplied, both its category and text
+    must appear in the user prompt verbatim so the strategist can build on
+    top of the improvement that produced the champion."""
+    captured: dict = {}
+    payload = {
+        "questions": [
+            {"category": cat, "text": f"valid question for {cat} category"}
+            for cat in CATEGORIES[:4]
+        ]
+    }
+
+    async def fake_complete(**kwargs):
+        captured.update(kwargs)
+        return [_fake_tool_use_block(payload)]
+
+    monkeypatch.setattr("cubist.agents.strategist.complete", fake_complete)
+
+    cq = {"category": "book", "text": "opening-book lookup hugely-distinctive-marker"}
+    await propose_questions(champion_code="x = 1", history=[], champion_question=cq)
+
+    assert "category: book" in captured["user"]
+    assert "hugely-distinctive-marker" in captured["user"]
+
+
+@pytest.mark.asyncio
+async def test_propose_questions_baseline_has_no_champion_question(monkeypatch):
+    """When champion_question is None (gen 1 / baseline), the prompt must
+    still render — the slot is filled with a clear placeholder rather than
+    leaving a literal ``{champion_question}`` token in the prompt."""
+    captured: dict = {}
+    payload = {
+        "questions": [
+            {"category": cat, "text": f"valid question for {cat} category"}
+            for cat in CATEGORIES[:4]
+        ]
+    }
+
+    async def fake_complete(**kwargs):
+        captured.update(kwargs)
+        return [_fake_tool_use_block(payload)]
+
+    monkeypatch.setattr("cubist.agents.strategist.complete", fake_complete)
+
+    await propose_questions(champion_code="x = 1", history=[])
+
+    assert "{champion_question}" not in captured["user"]
+    assert "baseline" in captured["user"]
