@@ -67,6 +67,25 @@ export default function App() {
     });
   }
 
+  // Stronger than Stop: also wipes engines/games/strategist questions on
+  // the server and broadcasts ``state.cleared`` so every connected
+  // dashboard zeroes its event log. We confirm because this is destructive
+  // — once cleared, history can't be recovered without replaying the
+  // generations from scratch.
+  function clearAll() {
+    if (
+      !window.confirm(
+        "Clear all engines, games, and strategist history? This cannot be undone."
+      )
+    ) {
+      return;
+    }
+    fetch("/api/state/clear", { method: "POST" }).catch(() => {
+      // Backend may be offline (mock dev mode) — frontend won't see a
+      // state.cleared event, but there's nothing to clear in that case.
+    });
+  }
+
   // Cancel the in-flight generation when the user closes/reloads the tab.
   // sendBeacon is the only network call the browser guarantees to flush
   // during pagehide — fetch() can race the document teardown and get
@@ -109,6 +128,14 @@ export default function App() {
             className="px-3 py-2 bg-gray-700 hover:bg-gray-600 active:bg-gray-800 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed text-white text-sm font-semibold rounded transition-colors"
           >
             ■ Stop
+          </button>
+
+          <button
+            onClick={clearAll}
+            disabled={events.length === 0 && !isRunning}
+            className="px-3 py-2 bg-red-700 hover:bg-red-600 active:bg-red-800 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed text-white text-sm font-semibold rounded transition-colors"
+          >
+            Clear
           </button>
 
           <button

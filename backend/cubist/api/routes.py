@@ -10,14 +10,19 @@ Routes:
     GET  /api/games[?gen=N]      games, optionally filtered to one generation
     POST /api/generations/run    cancel any in-flight generation; start fresh
     POST /api/generations/stop   cancel any in-flight generation; no replacement
+    POST /api/state/clear        cancel + wipe DB + delete generated engines
 """
 
+import logging
+from pathlib import Path
+
 from fastapi import APIRouter
-from sqlmodel import select
+from sqlmodel import delete, select
 
 from cubist.storage.db import get_session
 from cubist.storage.models import EngineRow, GameRow, GenerationRow
 
+log = logging.getLogger("cubist.api")
 router = APIRouter()
 
 
@@ -76,3 +81,64 @@ async def stop():
 
     stopped = await stop_current_generation_task()
     return {"stopped": stopped}
+
+
+@router.post("/state/clear")
+async def clear_state():
+    """Wipe all engines/games/generations and on-disk generated engines.
+
+    Stronger than ``/stop``: stops the current generation if any, then
+    deletes every row in the three tables, every ``.py`` under
+    ``engines/generated/`` (these are the LLM-built candidates), and
+    every ``.txt`` under ``engines/generated/_failures/``. Finally
+    broadcasts a ``state.cleared`` event so connected dashboards drop
+    their accumulated event log and show an empty UI matching the now-
+    empty backend state.
+
+    The baseline engine is NOT touched — it lives in
+    ``cubist.engines.baseline`` and is loaded directly by the
+    orchestrator, not from the engines table.
+    """
+    from cubist.api.websocket import bus
+    from cubist.orchestration.generation import stop_current_generation_task
+
+    stopped = await stop_current_generation_task()
+
+    with get_session() as s:
+        # Order doesn't matter — there are no FKs between these tables.
+        s.exec(delete(GameRow))
+        s.exec(delete(EngineRow))
+        s.exec(delete(GenerationRow))
+        s.commit()
+
+    # Hardcoded relative to this file's location — same convention as
+    # builder.py's GENERATED_DIR. Avoids importing builder just for the
+    # constant (would pull in the LLM SDK chain on a clear).
+    generated_dir = Path(__file__).parent.parent / "engines" / "generated"
+    failed_dir = generated_dir / "_failures"
+    deleted_engines = 0
+    deleted_failures = 0
+    if generated_dir.exists():
+        for p in generated_dir.glob("*.py"):
+            # Skip __init__.py if present — that's a package marker, not
+            # a generated candidate.
+            if p.name == "__init__.py":
+                continue
+            p.unlink()
+            deleted_engines += 1
+    if failed_dir.exists():
+        for p in failed_dir.glob("*.txt"):
+            p.unlink()
+            deleted_failures += 1
+
+    log.info(
+        "state cleared: stopped_running=%s deleted_engines=%d deleted_failures=%d",
+        stopped, deleted_engines, deleted_failures,
+    )
+    await bus.emit({"type": "state.cleared"})
+    return {
+        "cleared": True,
+        "stopped_running": stopped,
+        "deleted_engine_files": deleted_engines,
+        "deleted_failure_files": deleted_failures,
+    }

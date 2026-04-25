@@ -77,6 +77,17 @@ class GenerationCancelled(BaseModel):
     number: int
 
 
+class StateCleared(BaseModel):
+    """Emitted when the operator wipes engines/games/generations.
+
+    Triggered by ``POST /api/state/clear``. Tells every connected
+    dashboard to drop its accumulated event log so the UI shows a clean
+    slate matching the now-empty database.
+    """
+
+    type: Literal["state.cleared"] = "state.cleared"
+
+
 Event = Union[
     GenerationStarted,
     StrategistQuestion,
@@ -85,6 +96,7 @@ Event = Union[
     GameFinished,
     GenerationFinished,
     GenerationCancelled,
+    StateCleared,
 ]
 
 

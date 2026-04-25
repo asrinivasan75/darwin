@@ -39,8 +39,18 @@ export function useEventStream(): CubistEvent[] {
   useEffect(() => {
     const useMock = new URLSearchParams(location.search).has("mock");
 
-    /** Appends one event to the accumulated log without mutating prior state. */
-    const push = (e: CubistEvent) => setEvents((prev) => [...prev, e]);
+    // ``state.cleared`` is a control event from the backend's
+    // ``/api/state/clear`` endpoint — it tells us the DB has been wiped
+    // and we should drop everything we've accumulated so the dashboard
+    // matches the now-empty server state. We swallow the event itself
+    // (don't append it) since downstream panels don't need to render it.
+    const push = (e: CubistEvent) => {
+      if (e.type === "state.cleared") {
+        setEvents([]);
+        return;
+      }
+      setEvents((prev) => [...prev, e]);
+    };
 
     if (useMock) {
       // startMockStream returns a cleanup fn that cancels all pending timeouts

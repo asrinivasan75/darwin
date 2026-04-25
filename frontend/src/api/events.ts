@@ -59,6 +59,14 @@ export type GenerationCancelled = {
   number: number;
 };
 
+// Emitted by POST /api/state/clear after the operator wipes the database
+// and on-disk generated engines. The frontend handles this in
+// useEventStream by resetting the accumulated event log to []; every
+// panel then renders its empty state. Not stored in the log itself.
+export type StateCleared = {
+  type: "state.cleared";
+};
+
 export type CubistEvent =
   | GenerationStarted
   | StrategistQuestion
@@ -66,6 +74,7 @@ export type CubistEvent =
   | GameMove
   | GameFinished
   | GenerationFinished
-  | GenerationCancelled;
+  | GenerationCancelled
+  | StateCleared;
 
 export type Envelope = { event: CubistEvent };
