@@ -1,0 +1,52 @@
+% fig-frozen-contracts.tex
+% Three frozen contracts as parallelization seams. Each pillar shows the
+% interface, the producers, and the consumers it decouples.
+\begin{tikzpicture}[
+    font=\small\sffamily,
+    pillar/.style={
+        draw=black!60, rounded corners=3pt, fill=gray!5,
+        minimum width=42mm, minimum height=58mm, align=center, inner sep=4pt,
+    },
+    head/.style={font=\bfseries\sffamily\small, align=center},
+    code/.style={font=\ttfamily\footnotesize, align=center},
+    side/.style={
+        draw=black!50, rounded corners=2pt, fill=white,
+        minimum width=38mm, align=center, inner sep=2pt, font=\footnotesize,
+    },
+    arrow/.style={-latex, draw=black!70, line width=0.4pt},
+]
+
+% --- pillar 1: Engine Protocol ---
+\node[pillar] (p1) at (0,0) {};
+\node[head] at (p1.north) [yshift=-4mm] {Engine Protocol};
+\node[code] at (p1.center) [yshift=10mm]
+    {\texttt{select\_move(}\\\texttt{~~board, ms)}\\\texttt{-> chess.Move}};
+\node[side, above=2mm of p1.south] (p1c) {Tournament runner\\Validator};
+\node[side, above=1mm of p1c] (p1p) {Baseline engine\\Builder output};
+
+% --- pillar 2: DB schema ---
+\node[pillar, right=18mm of p1] (p2) {};
+\node[head] at (p2.north) [yshift=-4mm] {DB Schema};
+\node[code] at (p2.center) [yshift=10mm]
+    {\texttt{EngineRow}\\\texttt{GameRow}\\\texttt{GenerationRow}};
+\node[side, above=2mm of p2.south] (p2c) {REST API\\Replay tooling};
+\node[side, above=1mm of p2c] (p2p) {Orchestration\\Tournament writer};
+
+% --- pillar 3: WS events ---
+\node[pillar, right=18mm of p2] (p3) {};
+\node[head] at (p3.north) [yshift=-4mm] {WebSocket Events};
+\node[code] at (p3.center) [yshift=10mm]
+    {\texttt{strategist.question}\\\texttt{builder.completed}\\\texttt{game.move}\\\texttt{generation.finished}};
+\node[side, above=2mm of p3.south] (p3c) {Frontend dashboard\\Mock event stream};
+\node[side, above=1mm of p3c] (p3p) {EventBus emitters\\(every workstream)};
+
+% labels
+\node[font=\footnotesize\itshape, above=1mm of p1.north east, xshift=-12mm] {producers};
+\node[font=\footnotesize\itshape, above=1mm of p1p.north] {};
+\node[font=\footnotesize\itshape, below=1mm of p1.south] {};
+
+% top label across
+\node[font=\footnotesize\itshape, above=10mm of p2.north]
+    {Frozen at hour 1; never changed without team sync.};
+
+\end{tikzpicture}

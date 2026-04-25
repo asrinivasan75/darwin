@@ -1,0 +1,91 @@
+% fig-meta-architecture.tex
+% Whole-system architecture: backend modules, frontend, DB, optional Modal
+% backend, WS bus.
+\begin{tikzpicture}[
+    font=\small\sffamily,
+    mod/.style={
+        draw=black!60, rounded corners=2pt, fill=blue!6,
+        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+    },
+    api/.style={
+        draw=black!60, rounded corners=2pt, fill=red!10,
+        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+    },
+    store/.style={
+        draw=black!60, fill=gray!10,
+        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+    },
+    fe/.style={
+        draw=black!60, rounded corners=2pt, fill=purple!8,
+        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+    },
+    modal/.style={
+        draw=black!60, rounded corners=2pt, fill=orange!10,
+        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+    },
+    bus/.style={
+        draw=black!70, fill=green!12,
+        minimum height=6mm, minimum width=82mm, align=center,
+        font=\footnotesize\bfseries,
+    },
+    arrow/.style={-latex, draw=black!70, line width=0.4pt},
+    biarr/.style={latex-latex, draw=black!70, line width=0.4pt},
+    group/.style={
+        draw=black!40, dashed, rounded corners=4pt,
+        inner sep=3mm,
+    },
+]
+
+% Backend cluster
+\node[mod] (orch)  at (0,3.0) {orchestration\\\texttt{generation.py}};
+\node[mod] (strat) at (-2.4,2.0) {agents\\\texttt{strategist}};
+\node[mod] (build) at (0,2.0)    {agents\\\texttt{builder}};
+\node[mod] (val)   at (2.4,2.0)  {agents\\\texttt{validator}};
+\node[mod] (eng)   at (-2.4,0.7) {engines\\\texttt{base + baseline}};
+\node[mod] (tour)  at (0,0.7)    {tournament\\\texttt{runner + ref + elo}};
+\node[mod] (sel)   at (2.4,0.7)  {tournament\\\texttt{selection}};
+
+\node[group, fit=(orch)(strat)(val)(eng)(sel),
+      label={[font=\footnotesize\bfseries]above:Backend (Python)}] (be) {};
+
+% Storage
+\node[store, below=10mm of tour] (db) {SQLite\\\texttt{engines / games / generations}};
+
+% API + bus
+\node[api, right=18mm of orch] (api1) {FastAPI\\\texttt{/api/*}};
+\node[api, below=2mm of api1] (api2) {WebSocket\\\texttt{/ws}};
+\node[bus, below=14mm of api2] (bus) {EventBus (in-process pub/sub)};
+
+% Modal backend (optional)
+\node[modal, left=12mm of eng] (modal) {Modal pool\\\footnotesize warm pool / 40 ctnrs};
+
+% Frontend
+\node[fe, right=14mm of api1, yshift=10mm] (cli) {React + Vite client};
+\node[fe, below=2mm of cli] (board) {LiveBoard};
+\node[fe, below=2mm of board] (chart) {EloChart};
+\node[fe, below=2mm of chart] (feed)  {StrategistFeed};
+\node[group, fit=(cli)(board)(chart)(feed),
+      label={[font=\footnotesize\bfseries]above:Frontend}] (fe) {};
+
+% Edges
+\draw[arrow] (orch) -- (strat);
+\draw[arrow] (orch) -- (build);
+\draw[arrow] (orch) -- (val);
+\draw[arrow] (orch) -- (tour);
+\draw[arrow] (val) -- (tour);
+\draw[arrow] (tour) -- (sel);
+\draw[arrow] (build) -- (eng);
+\draw[arrow] (tour.south) -- (db);
+\draw[arrow] (orch.south) -- (db);
+\draw[arrow] (orch.east) -- (api1.west);
+\draw[arrow] (tour.east) -| (bus.west);
+\draw[arrow] (orch.east) -| (bus.west);
+\draw[arrow] (bus.east) -| (api2.south);
+\draw[biarr] (api1.east) -- (cli.west);
+\draw[biarr] (api2.east) -- (cli.west);
+\draw[biarr] (eng.west) -- (modal.east);
+
+\node[font=\footnotesize\itshape, below=1mm of bus]
+    {Every workstream emits events; the bus fans out to every WS subscriber.};
+
+\end{tikzpicture}

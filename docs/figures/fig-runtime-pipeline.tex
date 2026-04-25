@@ -1,0 +1,57 @@
+% fig-runtime-pipeline.tex
+% Engine-time parallelism: strategist -> N parallel builders -> validator
+% -> round-robin -> top-2 selection. Inputs: only TikZ libraries listed
+% in workflow.tex's preamble.
+\begin{tikzpicture}[
+    font=\small\sffamily,
+    node distance=6mm and 8mm,
+    box/.style={
+        draw=black!60, rounded corners=2pt, fill=blue!5,
+        minimum height=8mm, align=center, inner sep=4pt,
+    },
+    builder/.style={
+        draw=black!60, rounded corners=2pt, fill=orange!10,
+        minimum width=24mm, minimum height=7mm, align=center, inner sep=2pt,
+    },
+    sel/.style={
+        draw=black!60, rounded corners=2pt, fill=green!10,
+        minimum height=8mm, align=center, inner sep=4pt,
+    },
+    arrow/.style={-latex, draw=black!70, line width=0.5pt},
+    pile/.style={draw=black!50, dashed, rounded corners=4pt, inner sep=4mm},
+]
+
+\node[box] (champ) {Champion\\\textit{(prev. gen)}};
+\node[box, right=of champ] (strat) {Strategist\\\textit{deterministic}\\\textit{rotation}};
+
+\node[builder, right=20mm of strat, yshift=12mm] (b1) {Builder 1\\\footnotesize search};
+\node[builder, right=20mm of strat, yshift=4mm]  (b2) {Builder 2\\\footnotesize evaluation};
+\node[builder, right=20mm of strat, yshift=-4mm] (b3) {Builder 3\\\footnotesize book};
+\node[builder, right=20mm of strat, yshift=-12mm](b4) {Builder 4\\\footnotesize sampling};
+
+\node[box, right=22mm of b2, yshift=-4mm] (val) {Validator\\\footnotesize static gates\\\footnotesize +\,smoke game};
+\node[box, right=of val] (rr) {Round-robin\\\footnotesize incumbents\\\footnotesize +\,candidates};
+\node[sel, right=of rr] (top) {Top-2\\selection};
+\node[box, right=of top] (next) {Next-gen\\incumbents};
+
+\draw[arrow] (champ) -- (strat);
+\draw[arrow] (strat.east) -- (b1.west);
+\draw[arrow] (strat.east) -- (b2.west);
+\draw[arrow] (strat.east) -- (b3.west);
+\draw[arrow] (strat.east) -- (b4.west);
+\draw[arrow] (b1.east) -- (val.west);
+\draw[arrow] (b2.east) -- (val.west);
+\draw[arrow] (b3.east) -- (val.west);
+\draw[arrow] (b4.east) -- (val.west);
+\draw[arrow] (val) -- (rr);
+\draw[arrow] (rr) -- (top);
+\draw[arrow] (top) -- (next);
+
+\begin{pgfonlayer}{background}
+\node[pile, fit=(b1)(b2)(b3)(b4), label={[font=\footnotesize\itshape]above:N parallel builders}] {};
+\end{pgfonlayer}
+
+\node[font=\footnotesize\itshape, below=2mm of rr, align=center]
+    {Elo updated per game.\\Selection: tournament score, random tiebreak.};
+
+\end{tikzpicture}
