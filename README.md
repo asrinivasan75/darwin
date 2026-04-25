@@ -1,6 +1,8 @@
 # Darwin
 
-<img src="docs/darwin-logo.png" alt="Darwin logo" width="180" align="right" />
+<p align="center">
+  <img src="docs/darwin-logo.png" alt="Darwin logo" width="220" />
+</p>
 
 A self-improving chess engine that evolves its own scaffolding via agentic tournament selection.
 
