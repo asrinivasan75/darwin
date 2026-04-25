@@ -96,47 +96,60 @@ export default function Bracket({ events }: BracketProps) {
   );
 
   /**
-   * Returns the result symbol for the pairing (rowEngine as White, colEngine
-   * as Black). Returns undefined if the game hasn't finished yet.
+   * Aggregate the head-to-head matchup between rowEngine and colEngine
+   * across both color games. Returns the row engine's score, total
+   * games played in this pairing, and a label like "1.5/2".
    *
-   * We check both orderings because the round-robin may flip colours.
+   * Previous version showed per-color cells (W/L/D for one specific
+   * color assignment). That was confusing because the same pair could
+   * show "W" in one cell and "D" in the symmetric cell — both are
+   * correct (different games, white has advantage), but visually it
+   * read as inconsistent. Aggregate is symmetric and matches how
+   * round-robin standings are usually presented.
    */
-  function cellResult(
+  function pairScore(
     rowEngine: string,
-    colEngine: string
-  ): string | undefined {
-    // White = row, Black = col
-    const asWhite = finishedGames.find(
-      (g) => g.white === rowEngine && g.black === colEngine
-    );
-    if (asWhite) {
-      if (asWhite.result === "1-0") return "W";
-      if (asWhite.result === "0-1") return "L";
-      return "D";
+    colEngine: string,
+  ): { score: number; played: number } {
+    let score = 0;
+    let played = 0;
+    for (const g of finishedGames) {
+      if (g.white === rowEngine && g.black === colEngine) {
+        played += 1;
+        if (g.result === "1-0") score += 1;
+        else if (g.result === "1/2-1/2") score += 0.5;
+      } else if (g.white === colEngine && g.black === rowEngine) {
+        played += 1;
+        if (g.result === "0-1") score += 1;
+        else if (g.result === "1/2-1/2") score += 0.5;
+      }
     }
-    // White = col, Black = row (same pairing, colours swapped)
-    const asBlack = finishedGames.find(
-      (g) => g.white === colEngine && g.black === rowEngine
-    );
-    if (asBlack) {
-      if (asBlack.result === "1-0") return "L";
-      if (asBlack.result === "0-1") return "W";
-      return "D";
-    }
-    return undefined;
+    return { score, played };
   }
 
   /**
-   * Computes total tournament points for an engine.
-   * Scoring: wins×1, draws×0.5, losses×0
+   * Format the aggregate score as `n.n/m`. "1.5/2" reads cleanly and
+   * shows partial progress when the matchup isn't finished yet.
+   */
+  function formatPairCell(
+    score: number,
+    played: number,
+  ): string | null {
+    if (played === 0) return null;
+    // Trim trailing ".0" — "1/2" reads better than "1.0/2"
+    const s = score === Math.trunc(score) ? `${score}` : `${score.toFixed(1)}`;
+    return `${s}/${played}`;
+  }
+
+  /**
+   * Computes total tournament points for an engine — sum of all its
+   * pair-aggregate scores across the cohort.
    */
   function totalPoints(engine: string): number {
     let points = 0;
     for (const opp of engines) {
       if (opp === engine) continue;
-      const r = cellResult(engine, opp);
-      if (r === "W") points += 1;
-      if (r === "D") points += 0.5;
+      points += pairScore(engine, opp).score;
     }
     return points;
   }
@@ -203,15 +216,23 @@ export default function Bracket({ events }: BracketProps) {
                     </td>
                   );
                 }
-                const result = cellResult(rowEng, colEng);
+                const { score, played } = pairScore(rowEng, colEng);
+                const cellLabel = formatPairCell(score, played);
+                // Color: green if won the matchup outright (>50%),
+                // red if lost (<50%), yellow if exactly tied (50%),
+                // dim gray if no games played yet.
+                let colorClass = "text-gray-600";
+                if (played > 0) {
+                  if (score > played / 2) colorClass = "text-green-400";
+                  else if (score < played / 2) colorClass = "text-red-400";
+                  else colorClass = "text-yellow-400";
+                }
                 return (
                   <td
                     key={colEng}
-                    className={`p-1 text-center font-semibold ${resultClass(result)}`}
+                    className={`p-1 text-center font-semibold ${colorClass}`}
                   >
-                    {result ?? (
-                      <span className="text-gray-600">·</span>
-                    )}
+                    {cellLabel ?? <span className="text-gray-600">·</span>}
                   </td>
                 );
               })}
@@ -239,10 +260,6 @@ function shortName(name: string): string {
   return name.replace(/-[a-z0-9]{3}$/, "").slice(0, 10);
 }
 
-/** Returns the Tailwind text colour class for W / L / D / undefined. */
-function resultClass(result: string | undefined): string {
-  if (result === "W") return "text-green-400";
-  if (result === "L") return "text-red-400";
-  if (result === "D") return "text-yellow-400";
-  return "text-gray-600";
-}
+// resultClass removed — replaced by inline color logic in the cell
+// renderer when bracket switched from per-color W/L/D cells to
+// pair-aggregate score cells.

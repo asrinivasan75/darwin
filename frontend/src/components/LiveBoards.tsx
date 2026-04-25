@@ -222,15 +222,22 @@ interface BoardCardProps {
 }
 
 function BoardCard({ game }: BoardCardProps) {
-  // SAN history is in chronological order; even indices are white moves,
-  // odd are black. Reverse for display so the most recent move sits on top
-  // — keeps the latest action visible without scrolling.
-  const verboseHistory = game.san_history
-    .map((san, idx) => ({
-      idx,
-      text: verboseMove(san, idx % 2 === 0 ? "white" : "black"),
-    }))
-    .reverse();
+  // Standard PGN pair-rendering: "1. e4 e5" on one line, then "2. Nf3
+  // Nc6" on the next. White moves sit at even indices, black at odd.
+  // If the game ended on a half-move (white played but black didn't
+  // respond yet), the trailing pair shows just "N. <white>" alone.
+  // Reversed so the most recent pair is on top.
+  const movePairs: { fullMove: number; text: string }[] = [];
+  for (let i = 0; i < game.san_history.length; i += 2) {
+    const fullMove = Math.floor(i / 2) + 1;
+    const white = game.san_history[i];
+    const black = game.san_history[i + 1];
+    movePairs.push({
+      fullMove,
+      text: black ? `${fullMove}. ${white} ${black}` : `${fullMove}. ${white}`,
+    });
+  }
+  movePairs.reverse();
 
   // Bold the verdict for the outcomes operators care about most when
   // judging a candidate engine: hallucinated/illegal moves, real
@@ -329,12 +336,12 @@ function BoardCard({ game }: BoardCardProps) {
               <span className="text-yellow-400 font-mono">{game.result}</span>
             </div>
           )}
-          {verboseHistory.length === 0 ? (
+          {movePairs.length === 0 ? (
             <span className="italic text-gray-600">no moves yet</span>
           ) : (
-            verboseHistory.map(({ idx, text }) => (
-              <div key={idx} className="truncate" title={text}>
-                {idx + 1}. {text}
+            movePairs.map(({ fullMove, text }) => (
+              <div key={fullMove} className="truncate" title={text}>
+                {text}
               </div>
             ))
           )}

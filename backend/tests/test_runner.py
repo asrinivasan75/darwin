@@ -2,9 +2,18 @@ import asyncio
 
 import pytest
 
+from cubist.config import settings
 from cubist.engines.random_engine import RandomEngine
 from cubist.tournament.referee import GameResult
 from cubist.tournament.runner import round_robin
+
+
+@pytest.fixture(autouse=True)
+def _force_local_backend(monkeypatch):
+    """Tests in this file exercise the local asyncio path. The .env may
+    set ``TOURNAMENT_BACKEND=modal`` for the dev server; force-override
+    to ``local`` so the tests don't try to dispatch to Modal."""
+    monkeypatch.setattr(settings, "tournament_backend", "local")
 
 
 def test_round_robin_4_engines():

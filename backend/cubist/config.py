@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     max_parallel_games: int = 2
     max_moves_per_game: int = 120
 
+    # Where tournament games execute. "local" runs them here via
+    # asyncio.gather (current behavior). "modal" dispatches each game
+    # to a Modal container — real OS-level parallelism, no GIL, frees
+    # this machine's CPU. Requires `modal token` to be configured and
+    # `modal deploy backend/cubist/tournament/modal_runner.py` to have
+    # been run at least once.
+    tournament_backend: str = "local"
+
     api_host: str = "127.0.0.1"
     api_port: int = 8000
 

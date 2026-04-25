@@ -20,7 +20,11 @@ from cubist.engines.registry import load_engine
 from cubist.storage.db import get_session
 from cubist.storage.models import EngineRow, GameRow, GenerationRow
 from cubist.tournament.elo import update_elo
-from cubist.tournament.runner import round_robin
+from cubist.tournament.runner import (
+    cool_modal_pool,
+    round_robin,
+    warm_modal_pool,
+)
 from cubist.tournament.selection import select_top_n
 
 log = logging.getLogger("cubist.orchestration")
@@ -95,6 +99,20 @@ async def run_generation(
     primary = incumbents[0]
     runner_up = incumbents[1] if len(incumbents) > 1 else None
 
+    # Warm up the Modal pool right when this generation starts. Modal
+    # spins up containers in the background while strategist + builders
+    # + smoke run (~25-30s of compute), so by the time the tournament
+    # actually dispatches the warm pool is ready and tournament wall-
+    # clock skips cold-start entirely. No-op on local backend.
+    #
+    # Pool size: 20. Worst-case round-robin with 2 incumbents + 4
+    # candidates = 6 engines × 5 ordered pairs × games_per_pairing=1
+    # = 30 games. With 20 warm containers, the first 20 games hit
+    # warm (no cold-start), the remaining 10 hit memory-snapshot
+    # cold (~1-2s each, also concurrent). Cost: 20 idle containers
+    # for the ~30s of strategist/builder/smoke compute = ~$0.01/run.
+    await warm_modal_pool(20)
+
     await bus.emit(
         {
             "type": "generation.started",
@@ -112,11 +130,34 @@ async def run_generation(
     runner_up_src = _read_source(runner_up) if runner_up else None
     runner_up_name = runner_up.name if runner_up else None
 
+    # Build the strategist's history from prior generations so the
+    # deterministic rotation actually advances and the performance-bias
+    # logic has data. Each entry: ``champion_category`` is the category
+    # whose candidate became this gen's champion (None on retention),
+    # so the strategist can bias toward winning categories. Reading
+    # GenerationRow.champion_after's name prefix recovers the category
+    # from the format ``gen{N}-{cat}-{hash}``; baseline retentions
+    # don't match and yield None.
+    import re as _re_local
+    _CAT_RE = _re_local.compile(r"^gen\d+-([a-z]+)-")
+    with get_session() as s:
+        from sqlmodel import select as _select
+        prior_rows = s.exec(
+            _select(GenerationRow).order_by(GenerationRow.number)
+        ).all()
+        history = []
+        for r in prior_rows:
+            m = _CAT_RE.match(r.champion_after)
+            history.append({
+                "generation": r.number,
+                "champion_category": m.group(1) if m else None,
+            })
+
     questions = await propose_questions(
         primary_src,
-        [],
+        history,
         runner_up_code=runner_up_src,
-        champion_question=_champion_question(generation_number),
+        generation_number=generation_number,
     )
     for q in questions:
         await bus.emit(
@@ -354,6 +395,12 @@ async def run_generation(
             "ratings": {n: round(r, 1) for n, r in ratings.items()},
         }
     )
+
+    # Generation is done — drop the Modal warm pool back to 0 so we
+    # stop paying idle costs. Fire-and-forget: any failure to cool
+    # down is logged but does not affect generation completion.
+    await cool_modal_pool()
+
     return top
 
 
@@ -417,6 +464,14 @@ async def run_generation_task() -> None:
                 if len(top_names) >= 2:
                     break
 
+            log.info(
+                "lineage candidates for gen=%d top_names=%s "
+                "(scores: %s)",
+                next_number,
+                top_names,
+                {n: round(scores[n], 1) for n in top_names if n in scores},
+            )
+
             incumbents = []
             for name in top_names:
                 row = s.exec(
@@ -426,17 +481,21 @@ async def run_generation_task() -> None:
                     if name == "baseline-v0":
                         from cubist.engines.baseline import engine as baseline
                         incumbents.append(baseline)
+                        log.info("loaded incumbent %s (baseline import)", name)
                     else:
                         log.warning(
-                            "skipping incumbent %s — no EngineRow found",
+                            "DROPPED incumbent %s — no EngineRow found "
+                            "(this is why next-gen cohort is smaller than expected)",
                             name,
                         )
                     continue
                 try:
                     incumbents.append(load_engine(row.code_path))
+                    log.info("loaded incumbent %s from %s", name, row.code_path)
                 except Exception as e:
                     log.warning(
-                        "skipping incumbent %s — load_engine failed: %r",
+                        "DROPPED incumbent %s — load_engine failed: %r "
+                        "(this is why next-gen cohort is smaller than expected)",
                         name, e,
                     )
 
@@ -455,8 +514,15 @@ async def run_generation_task() -> None:
         next_number, [e.name for e in incumbents],
     )
     try:
-        await run_generation(incumbents, next_number)
-        log.info("run_generation_task finished generation=%d", next_number)
+        try:
+            await run_generation(incumbents, next_number)
+            log.info("run_generation_task finished generation=%d", next_number)
+        finally:
+            # Always cool the Modal warm pool — covers the happy path
+            # (run_generation already cooled, this is a no-op),
+            # cancellation, and crashes. Without this a cancelled run
+            # would leave 4 containers idling indefinitely.
+            await cool_modal_pool()
     except asyncio.CancelledError:
         log.warning("run_generation_task cancelled generation=%d", next_number)
         # Emit a terminal event so the dashboard knows to stop showing
