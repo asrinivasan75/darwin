@@ -281,6 +281,10 @@ async def run_generation(
             "new_champion": new_champion.name,
             "elo_delta": round(elo_delta, 1),
             "promoted": promoted,
+            # Full cohort Elo so the frontend can plot every engine,
+            # not just the champion. Round to 1 decimal so we don't
+            # ship 16-digit floats to a chart that displays integers.
+            "ratings": {n: round(r, 1) for n, r in ratings.items()},
         }
     )
     return top

@@ -20,6 +20,7 @@ import { useEffect } from "react";
 import { useEventStream } from "./hooks/useEventStream";
 import LiveBoards from "./components/LiveBoards";
 import EloChart from "./components/EloChart";
+import EnginesEloChart from "./components/EnginesEloChart";
 import StrategistFeed from "./components/StrategistFeed";
 import Bracket from "./components/Bracket";
 import GenerationTimeline from "./components/GenerationTimeline";
@@ -211,13 +212,18 @@ export default function App() {
         <LiveBoards events={events} />
       </div>
 
-      {/* ── Row 2: Strategist feed + Elo chart ───────────────────────────── */}
+      {/* ── Row 2: Strategist feed + Champion Elo (headline) ─────────────── */}
       <div className="grid grid-cols-2 gap-6 mb-6">
         <StrategistFeed events={events} />
         <EloChart events={events} />
       </div>
 
-      {/* ── Row 3: Tournament bracket + Generation history ────────────────── */}
+      {/* ── Row 3: All-engines Elo (per-cohort detail view) ──────────────── */}
+      <div className="mb-6">
+        <EnginesEloChart events={events} />
+      </div>
+
+      {/* ── Row 4: Tournament bracket + Generation history ────────────────── */}
       <div className="grid grid-cols-2 gap-6">
         <Bracket events={events} />
         <GenerationTimeline events={events} />

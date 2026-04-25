@@ -48,6 +48,9 @@ export type GenerationFinished = {
   new_champion: string;
   elo_delta: number;
   promoted: boolean;
+  // Post-tournament Elo for every engine in this gen's cohort, keyed by
+  // engine.name. Optional — older payloads (pre-feature) won't have it.
+  ratings?: Record<string, number>;
 };
 
 // Emitted by run_generation_task when an asyncio.CancelledError fires —

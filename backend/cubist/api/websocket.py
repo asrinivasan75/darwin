@@ -60,6 +60,10 @@ class GenerationFinished(BaseModel):
     new_champion: str
     elo_delta: float
     promoted: bool  # True if a new champion was crowned
+    # Post-tournament Elo for every engine that played in this
+    # generation's cohort. Keyed by engine.name (hyphenated).
+    # Defaults to {} so older payloads (pre-feature) still validate.
+    ratings: dict[str, float] = Field(default_factory=dict)
 
 
 class GenerationCancelled(BaseModel):
