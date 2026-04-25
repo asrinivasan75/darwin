@@ -57,13 +57,14 @@ events_queue = modal.Queue.from_name("darwin-events", create_if_missing=True)
 @app.function(
     cpu=1,
     # Hard ceiling per game: 30s. The runner handles per-game
-    # FunctionTimeoutError gracefully now (synthesizes a draw with
-    # termination=error so the tournament continues), so we can be
-    # aggressive about killing slow engines. 30s comfortably fits a
-    # healthy game (60 plies × ~50-200ms move time = ~5-15s wall) but
-    # kills synchronous-deep-search blowups in half the time the
-    # previous 60s ceiling allowed.
-    timeout=30,
+    # FunctionTimeoutError is handled gracefully (synthesizes a draw
+    # with termination=error so the tournament continues). Past
+    # tournaments at 30s saw 50%+ of games time out, because LLM-built
+    # alpha-beta+quiescence engines can spend 1-2s/move on hot middle-
+    # game positions: 80 plies × 1.5s = 120s wall. 90s lets a typical
+    # game finish while still killing pathological synchronous-deep-
+    # search blowups before they monopolize a worker.
+    timeout=90,
     # Cap concurrency to 40 — handles 4 candidates + 1 incumbent =
     # 5 engines × 4 ordered pairs × games_per_pairing=2 = 40-game
     # worst-case round-robins without queuing.

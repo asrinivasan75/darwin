@@ -8,8 +8,8 @@
  * @module LiveBoards
  */
 
-import { useMemo } from "react";
-import type { ReactNode } from "react";
+import { Component, memo, useMemo } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import { Chessboard } from "react-chessboard";
 import type { DarwinEvent, GameMove, GameFinished } from "../api/events";
 
@@ -310,12 +310,76 @@ export function EmptyPlot({
 
 // ── Board card ────────────────────────────────────────────────────────────
 
+/**
+ * Catches render errors from react-chessboard so a malformed FEN (or
+ * an internal lib bug) renders a small placeholder square instead of
+ * collapsing the parent flex column to zero height — which is what
+ * caused the "boards missing entirely" symptom on the dashboard.
+ */
+class BoardErrorBoundary extends Component<
+  { children: ReactNode; fen: string },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.warn("[LiveBoards] Chessboard render failed:", error, info);
+  }
+
+  componentDidUpdate(prevProps: { fen: string }) {
+    // Reset error state when the FEN changes — the next move might
+    // be valid even if the previous one wasn't.
+    if (prevProps.fen !== this.props.fen && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          className="flex items-center justify-center text-[10px] italic"
+          style={{
+            width: 168,
+            height: 168,
+            color: "var(--ink-faint)",
+            background: "rgba(34,41,35,0.5)",
+          }}
+        >
+          board unavailable
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 interface BoardCardProps {
   game: GameState;
   index: number;
 }
 
-function BoardCard({ game, index }: BoardCardProps) {
+const BoardCard = memo(BoardCardImpl, (prev, next) => {
+  // Only re-render when this specific game's data actually changed.
+  // The parent passes a fresh `games` array on every event, but we
+  // don't care if some other game made a move — only ours.
+  return (
+    prev.index === next.index &&
+    prev.game.game_id === next.game.game_id &&
+    prev.game.fen === next.game.fen &&
+    prev.game.ply === next.game.ply &&
+    prev.game.finished === next.game.finished &&
+    prev.game.result === next.game.result &&
+    prev.game.termination === next.game.termination &&
+    prev.game.san_history.length === next.game.san_history.length
+  );
+});
+
+function BoardCardImpl({ game, index }: BoardCardProps) {
   const movePairs: { fullMove: number; text: string }[] = [];
   for (let i = 0; i < game.san_history.length; i += 2) {
     const fullMove = Math.floor(i / 2) + 1;
@@ -409,28 +473,31 @@ function BoardCard({ game, index }: BoardCardProps) {
             style={{
               boxShadow:
                 "0 0 0 1px rgba(0,0,0,0.45), 0 6px 18px -10px rgba(0,0,0,0.6), inset 0 0 0 2px rgba(122,90,55,0.55)",
+              minHeight: 168,
             }}
           >
-            <Chessboard
-              // Defensive: empty / undefined fen happens when a game
-              // was synthesized as an error-forfeit before any moves
-              // landed (Modal timeout fallback). react-chessboard
-              // silently renders nothing for empty position; force the
-              // starting position so the slot at least has a board.
-              position={
-                !game.fen || game.fen === "start"
-                  ? "start"
-                  : game.fen
-              }
-              arePiecesDraggable={false}
-              customDarkSquareStyle={{
-                backgroundColor: "var(--board-dark)",
-              }}
-              customLightSquareStyle={{
-                backgroundColor: "var(--board-light)",
-              }}
-              boardWidth={168}
-            />
+            <BoardErrorBoundary fen={game.fen}>
+              <Chessboard
+                // Defensive: empty / undefined fen happens when a game
+                // was synthesized as an error-forfeit before any moves
+                // landed (Modal timeout fallback). react-chessboard
+                // silently renders nothing for empty position; force
+                // the starting position so the slot has a board.
+                position={
+                  !game.fen || game.fen === "start"
+                    ? "start"
+                    : game.fen
+                }
+                arePiecesDraggable={false}
+                customDarkSquareStyle={{
+                  backgroundColor: "var(--board-dark)",
+                }}
+                customLightSquareStyle={{
+                  backgroundColor: "var(--board-light)",
+                }}
+                boardWidth={168}
+              />
+            </BoardErrorBoundary>
           </div>
           <PlayerLine
             color="white"
