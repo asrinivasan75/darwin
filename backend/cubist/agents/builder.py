@@ -37,6 +37,7 @@ mode can be reverse-engineered later.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -363,7 +364,26 @@ async def validate_engine(module_path: Path) -> tuple[bool, str | None]:
         # Short per-move budget so a misbehaving builder doesn't burn
         # the validator's wall-clock. The referee API may evolve; we
         # pass the conservative subset everyone has agreed on.
-        result = await play_game(eng, opp, time_per_move_ms=10_000)
+        #
+        # Total wall-clock cap of 60s catches engines that pass the
+        # per-move budget but design themselves into death-by-thousand-
+        # LLM-calls patterns (e.g. an evaluator that calls the LLM once
+        # per legal move, every move). Such an engine is technically
+        # "valid" — it returns moves before the per-move timeout —
+        # but the smoke game would still take ~20 minutes to complete
+        # and the resulting candidate would lose every tournament game
+        # on time anyway. Rejecting fast keeps the dashboard live.
+        result = await asyncio.wait_for(
+            play_game(eng, opp, time_per_move_ms=10_000),
+            timeout=60.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "validate_engine smoke-game exceeded 60s engine=%s — rejecting "
+            "(likely an N-LLM-calls-per-move pattern)",
+            name_hint,
+        )
+        return False, "smoke too slow (>60s — likely calls LLM per legal move)"
     except Exception as e:
         logger.error("validate_engine play raised engine=%s err=%r", name_hint, e)
         return False, f"play: {e!r}"

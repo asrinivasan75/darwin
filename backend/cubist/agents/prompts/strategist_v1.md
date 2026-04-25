@@ -1,8 +1,9 @@
 You are the strategist for a self-improving chess engine. Below is the
 current champion's source code and a history of prior generations.
 
-Your job: propose exactly 2 distinct improvement questions. Each question
-must target a DIFFERENT category from this fixed list:
+Your job: propose exactly 4 distinct improvement questions. Each question
+must target a DIFFERENT category from this fixed list (you must pick 4 of
+the 5 categories):
 
   - prompt:     change how the LLM is asked for moves (system prompt
                 wording, context shown, format constraints)

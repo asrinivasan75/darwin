@@ -25,8 +25,8 @@ def _fake_text_block(text: str) -> SimpleNamespace:
 
 @pytest.mark.asyncio
 async def test_propose_questions_happy_path(monkeypatch):
-    """Strategist returns two distinct-category Question records."""
-    chosen = CATEGORIES[:2]
+    """Strategist returns four distinct-category Question records."""
+    chosen = CATEGORIES[:4]
     payload = {
         "questions": [
             {"category": cat, "text": f"Make the {cat} better please" * 2}
@@ -41,7 +41,7 @@ async def test_propose_questions_happy_path(monkeypatch):
 
     qs = await propose_questions(champion_code="x = 1", history=[])
 
-    assert len(qs) == 2
+    assert len(qs) == 4
     assert {q.category for q in qs} == set(chosen)
     assert all(isinstance(q, Question) for q in qs)
     assert all(len(q.text) >= 20 for q in qs)
@@ -86,7 +86,7 @@ async def test_propose_questions_passes_history_into_prompt(monkeypatch):
     payload = {
         "questions": [
             {"category": cat, "text": f"valid question for {cat} category"}
-            for cat in CATEGORIES[:2]
+            for cat in CATEGORIES[:4]
         ]
     }
 
