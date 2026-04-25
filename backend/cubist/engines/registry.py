@@ -2,6 +2,7 @@
 
 import importlib
 import importlib.util
+import sys
 from pathlib import Path
 
 from cubist.engines.base import Engine
@@ -17,6 +18,15 @@ def load_engine(module_path: str) -> Engine:
         if spec is None or spec.loader is None:
             raise ImportError(f"cannot load {module_path}")
         mod = importlib.util.module_from_spec(spec)
+        # Register in sys.modules BEFORE exec_module so:
+        #   1. The class's __module__ attribute resolves to a real
+        #      sys.modules entry, letting inspect.getsource() find the
+        #      source file when the orchestrator later asks for it as
+        #      the new gen's primary champion.
+        #   2. Any internal `from .x import y` style relative imports
+        #      inside the loaded engine module work — though our engines
+        #      don't use them, this is the standard importlib idiom.
+        sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)
     else:
         mod = importlib.import_module(module_path)
