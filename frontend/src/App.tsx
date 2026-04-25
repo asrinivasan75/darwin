@@ -17,8 +17,9 @@ import StrategistFeed from "./components/StrategistFeed";
 import Bracket from "./components/Bracket";
 import GenerationTimeline from "./components/GenerationTimeline";
 import DiffView from "./components/DiffView";
+import EngineAnalytics from "./components/EngineAnalytics";
 
-type ViewMode = "dashboard" | "diff";
+type ViewMode = "dashboard" | "diff" | "analytics";
 
 export default function App() {
   const events = useEventStream();
@@ -143,8 +144,10 @@ export default function App() {
         </section>
 
           </>
-        ) : (
+        ) : activeView === "diff" ? (
           <DiffView />
+        ) : (
+          <EngineAnalytics />
         )}
 
         <Footer />
@@ -243,6 +246,12 @@ function Header(props: HeaderProps) {
             onClick={() => onViewChange("diff")}
           >
             diff view
+          </ViewButton>
+          <ViewButton
+            active={activeView === "analytics"}
+            onClick={() => onViewChange("analytics")}
+          >
+            analytics
           </ViewButton>
         </nav>
 

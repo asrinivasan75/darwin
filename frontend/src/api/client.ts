@@ -56,8 +56,8 @@ export async function fetchEngineCode(name: string): Promise<string> {
  * @param gen - generation number to filter by
  * @returns raw JSON response from `GET /api/games?gen={gen}`
  */
-export async function fetchGames(gen: number): Promise<unknown> {
-  const r = await fetch(`/api/games?gen=${gen}`);
+export async function fetchGames(gen?: number): Promise<unknown> {
+  const r = await fetch(gen === undefined ? "/api/games" : `/api/games?gen=${gen}`);
   return r.json();
 }
 
