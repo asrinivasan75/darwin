@@ -12,6 +12,7 @@ import math
 
 import chess
 
+from cubist.config import settings
 from cubist.engines.base import BaseLLMEngine
 
 PIECE_VALUES = {
