@@ -367,6 +367,7 @@ async def build_engine(
         user=user,
         max_tokens=8192,
         tools=[TOOL],
+        provider=settings.provider_for("builder"),
     )
 
     # Capture every block we got so a non-tool_use response is loggable.

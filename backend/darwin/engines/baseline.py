@@ -64,12 +64,20 @@ class BaselineEngine(BaseLLMEngine):
         alpha: float,
         beta: float,
     ) -> float:
-        if depth == 0 or board.is_game_over(claim_draw=True):
+        if depth == 0:
             return self._evaluate(board)
+        if board.is_insufficient_material() or board.halfmove_clock >= 100:
+            return 0
+
+        moves = self._ordered_moves(board)
+        if not moves:
+            if board.is_check():
+                return -MATE_SCORE if board.turn == chess.WHITE else MATE_SCORE
+            return 0
 
         if board.turn == chess.WHITE:
             value = -math.inf
-            for move in self._ordered_moves(board):
+            for move in moves:
                 board.push(move)
                 value = max(value, self._search(board, depth - 1, alpha, beta))
                 board.pop()
@@ -79,7 +87,7 @@ class BaselineEngine(BaseLLMEngine):
             return value
 
         value = math.inf
-        for move in self._ordered_moves(board):
+        for move in moves:
             board.push(move)
             value = min(value, self._search(board, depth - 1, alpha, beta))
             board.pop()
@@ -92,7 +100,7 @@ class BaselineEngine(BaseLLMEngine):
         """Evaluate from White's perspective."""
         if board.is_checkmate():
             return -MATE_SCORE if board.turn == chess.WHITE else MATE_SCORE
-        if board.is_game_over(claim_draw=True):
+        if board.is_insufficient_material() or board.halfmove_clock >= 100:
             return 0
 
         material = 0
@@ -100,17 +108,14 @@ class BaselineEngine(BaseLLMEngine):
             material += len(board.pieces(piece_type, chess.WHITE)) * value
             material -= len(board.pieces(piece_type, chess.BLACK)) * value
 
-        mobility_turn = board.turn
-        white_mobility = self._mobility(board, chess.WHITE)
-        black_mobility = self._mobility(board, chess.BLACK)
-        board.turn = mobility_turn
+        saved_turn = board.turn
+        board.turn = chess.WHITE
+        white_mobility = board.legal_moves.count()
+        board.turn = chess.BLACK
+        black_mobility = board.legal_moves.count()
+        board.turn = saved_turn
 
         return material + 2 * (white_mobility - black_mobility)
-
-    def _mobility(self, board: chess.Board, color: chess.Color) -> int:
-        board_copy = board.copy(stack=False)
-        board_copy.turn = color
-        return board_copy.legal_moves.count()
 
     def _ordered_moves(self, board: chess.Board) -> list[chess.Move]:
         def priority(move: chess.Move) -> tuple[int, int, int]:
@@ -120,10 +125,7 @@ class BaselineEngine(BaseLLMEngine):
             if captured is not None and attacker is not None:
                 capture_gain = PIECE_VALUES[captured.piece_type] - PIECE_VALUES[attacker.piece_type]
             promotion = PIECE_VALUES.get(move.promotion, 0)
-            board.push(move)
-            gives_mate = board.is_checkmate()
-            board.pop()
-            return (int(gives_mate), promotion, capture_gain)
+            return (int(board.gives_check(move)), promotion, capture_gain)
 
         return sorted(board.legal_moves, key=priority, reverse=True)
 
