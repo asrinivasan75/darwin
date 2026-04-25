@@ -215,19 +215,64 @@ async def _round_robin_modal(
 
     try:
         results: list[GameResult] = []
-        # starmap.aio yields one result per game as it completes. The
-        # function returns just the GameResult fields now — events
-        # already flowed via the queue while the game was in flight.
-        async for ret in play_game_remote.starmap.aio(args):
-            results.append(
-                GameResult(
-                    white=ret["white"],
-                    black=ret["black"],
-                    result=ret["result"],
-                    termination=ret["termination"],
-                    pgn=ret["pgn"],
+        # Spawn each game individually (instead of starmap.aio which
+        # raises and aborts the whole tournament on any single failure).
+        # Then await each handle with its own try/except — when an
+        # engine writes synchronous code that doesn't yield to the
+        # asyncio scheduler, Modal's container `timeout=30s` kills it
+        # at the OS level, raising FunctionTimeoutError on our side.
+        # We synthesize an "error" GameResult for that game and keep
+        # going. The cohort still gets a fair score for the other 89.
+        handles = [
+            await play_game_remote.spawn.aio(*a) for a in args
+        ]
+
+        for h, a in zip(handles, args):
+            (_white_src, white_name, _black_src, black_name,
+             _t, game_id) = a
+            try:
+                ret = await h.get.aio()
+                results.append(
+                    GameResult(
+                        white=ret["white"],
+                        black=ret["black"],
+                        result=ret["result"],
+                        termination=ret["termination"],
+                        pgn=ret["pgn"],
+                    )
                 )
-            )
+            except Exception as e:
+                log.warning(
+                    "modal game id=%d (%s vs %s) failed: %s — "
+                    "synthesizing draw with termination=error so the "
+                    "tournament can continue.",
+                    game_id, white_name, black_name,
+                    f"{type(e).__name__}: {str(e)[:140]}",
+                )
+                # Synthesize a draw so neither side benefits/suffers
+                # arbitrarily from the failure. select_top_n still
+                # ranks the cohort fairly off the other 89 games.
+                results.append(
+                    GameResult(
+                        white=white_name,
+                        black=black_name,
+                        result="1/2-1/2",
+                        termination="error",
+                        pgn="",
+                    )
+                )
+                # Emit a synthetic game.finished so the dashboard can
+                # mark the board as done instead of showing it stuck.
+                if on_event is not None:
+                    await on_event({
+                        "type": "game.finished",
+                        "game_id": game_id,
+                        "white": white_name,
+                        "black": black_name,
+                        "result": "1/2-1/2",
+                        "termination": "error",
+                        "pgn": "",
+                    })
     finally:
         # Tail-drain: a couple of events may still be in flight from
         # the last container. Give them a beat to land before stopping.
