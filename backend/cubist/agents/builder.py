@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from pathlib import Path
 
 from cubist.agents.strategist import Question
 from cubist.config import settings
 from cubist.llm import complete
+
+log = logging.getLogger("cubist.builder")
 
 PROMPT = (Path(__file__).parent / "prompts" / "builder_v1.md").read_text()
 
@@ -152,26 +155,40 @@ async def build_engine(
         "code block containing the full engine module and no extra prose."
     )
 
+    log.info(
+        "builder start engine=%s gen=%d category=%s model=%s",
+        engine_name,
+        generation,
+        question.category,
+        settings.builder_model,
+    )
     content = await complete(
         model=settings.builder_model,
         system="You write Python chess engines.",
         user=user,
-        max_tokens=4096,
+        max_tokens=16384,
         tools=[TOOL],
     )
 
+    block_kinds = [getattr(b, "type", "?") for b in content]
+    log.info("builder response engine=%s blocks=%s", engine_name, block_kinds)
+
     for block in content:
         if getattr(block, "type", None) == "tool_use" and block.name == "submit_engine":
+            log.info("builder tool_use ok engine=%s code_chars=%d", engine_name, len(block.input["code"]))
             return _write_engine(block.input["code"], engine_name, safe_filename)
 
     text = "\n".join(
         block.text for block in content if getattr(block, "type", None) == "text" and block.text
     )
+    log.info("builder falling back to text parse engine=%s text_chars=%d", engine_name, len(text))
     code = _code_from_text(text)
     if code is not None:
+        log.info("builder text parse ok engine=%s code_chars=%d", engine_name, len(code))
         return _write_engine(code, engine_name, safe_filename)
 
     excerpt = text[:200].replace("\n", " ")
+    log.error("builder parse failed engine=%s excerpt=%r", engine_name, excerpt)
     raise RuntimeError(f"builder did not return tool_use or parseable code: {excerpt!r}")
 
 
@@ -212,6 +229,10 @@ async def validate_engine(module_path: Path) -> tuple[bool, str | None]:
         return False, f"play: {e!r}"
 
     if getattr(result, "termination", None) == "error":
-        return False, "engine crashed during smoke game"
+        detail = getattr(result, "error", None) or "no detail"
+        return False, f"engine crashed during smoke game: {detail}"
+    if getattr(result, "termination", None) == "illegal_move":
+        detail = getattr(result, "error", None) or "no detail"
+        return False, f"engine made illegal move: {detail}"
 
     return True, None

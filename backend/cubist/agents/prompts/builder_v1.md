@@ -41,5 +41,49 @@ REQUIREMENTS
   - Keep the answer focused on the question's category — don't pile on
     orthogonal changes. One concept per builder run.
 
+EXACT API SURFACE — do NOT invent kwargs or helpers beyond these.
+
+```python
+# cubist.engines.base
+class BaseLLMEngine:
+    name: str
+    generation: int
+    lineage: list[str]
+
+    def __init__(self, name: str, generation: int, lineage: list[str] | None = None): ...
+    async def select_move(self, board: chess.Board, time_remaining_ms: int) -> chess.Move: ...
+
+# cubist.llm — these are the ONLY signatures. No `temperature`, no
+# `top_p`, no `system_prompt=`, no streaming, no sync variants.
+async def complete(
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int = 256,
+    tools: list[dict] | None = None,
+) -> list[TextBlock | ToolUseBlock]:
+    """Returns a list of content blocks. Each has `.type` ("text" or
+    "tool_use"). TextBlock has `.text`; ToolUseBlock has `.name` and
+    `.input` (dict)."""
+
+async def complete_text(
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int = 256,
+) -> str:
+    """Plain-text wrapper. Returns "" if the model produced no text."""
+
+# cubist.config
+from cubist.config import settings
+settings.player_model      # str — model id to pass as `model=`
+settings.builder_model     # str
+settings.strategist_model  # str
+```
+
+Calling `complete(...)` or `complete_text(...)` with any other keyword
+argument (e.g. `temperature=`, `top_p=`, `prompt=`) will raise
+TypeError at runtime and crash the engine — your code will be discarded.
+
 Submit the entire module source as a single string via the
 `submit_engine` tool.

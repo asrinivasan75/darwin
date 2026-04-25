@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -17,6 +18,8 @@ import chess.pgn
 
 from cubist.config import settings
 from cubist.engines.base import Engine
+
+log = logging.getLogger("cubist.referee")
 
 EventCb = Callable[[dict], Awaitable[None]] | None
 
@@ -28,6 +31,7 @@ class GameResult:
     result: str  # "1-0" | "0-1" | "1/2-1/2"
     termination: str  # "checkmate" | "stalemate" | "time" | "max_moves" | "error"
     pgn: str
+    error: str | None = None
 
 
 def _to_pgn(board: chess.Board, white: str, black: str, result: str) -> str:
@@ -65,6 +69,7 @@ async def _finish(
     termination: str,
     on_event: EventCb,
     game_id: int,
+    error: str | None = None,
 ) -> GameResult:
     pgn = _to_pgn(board, white, black, result)
     if on_event:
@@ -77,9 +82,12 @@ async def _finish(
                 "pgn": pgn,
                 "white": white,
                 "black": black,
+                "error": error,
             }
         )
-    return GameResult(white=white, black=black, result=result, termination=termination, pgn=pgn)
+    return GameResult(
+        white=white, black=black, result=result, termination=termination, pgn=pgn, error=error
+    )
 
 
 async def play_game(
@@ -90,6 +98,38 @@ async def play_game(
     game_id: int = 0,
 ) -> GameResult:
     board = chess.Board()
+    try:
+        return await _play_game_inner(board, white, black, time_per_move_ms, on_event, game_id)
+    except Exception as exc:
+        # Last-resort guard: anything not handled inside the loop (e.g. an
+        # on_event subscriber raising, _to_pgn blowing up, a chess library
+        # invariant violation) becomes a forfeit for the side to move at the
+        # time of the crash, never a tournament-aborting exception.
+        log.exception(
+            "game %d unhandled orchestrator error white=%s black=%s",
+            game_id,
+            white.name,
+            black.name,
+        )
+        loser_is_white = board.turn == chess.WHITE
+        return GameResult(
+            white=white.name,
+            black=black.name,
+            result=_loss_result(loser_is_white),
+            termination="error",
+            pgn="",
+            error=f"orchestrator: {type(exc).__name__}: {exc}",
+        )
+
+
+async def _play_game_inner(
+    board: chess.Board,
+    white: Engine,
+    black: Engine,
+    time_per_move_ms: int,
+    on_event: EventCb,
+    game_id: int,
+) -> GameResult:
     timeout_s = (time_per_move_ms / 1000) + 5
 
     while not board.is_game_over(claim_draw=True):
@@ -113,6 +153,7 @@ async def play_game(
                 timeout=timeout_s,
             )
         except asyncio.TimeoutError:
+            log.warning("game %d timeout engine=%s ply=%d", game_id, engine.name, board.ply())
             return await _finish(
                 board,
                 white.name,
@@ -122,7 +163,8 @@ async def play_game(
                 on_event,
                 game_id,
             )
-        except Exception:
+        except Exception as exc:
+            log.exception("game %d engine error engine=%s ply=%d", game_id, engine.name, board.ply())
             return await _finish(
                 board,
                 white.name,
@@ -131,9 +173,17 @@ async def play_game(
                 "error",
                 on_event,
                 game_id,
+                error=f"{type(exc).__name__}: {exc}",
             )
 
         if move not in board.legal_moves:
+            log.warning(
+                "game %d illegal move engine=%s ply=%d move=%s",
+                game_id,
+                engine.name,
+                board.ply(),
+                move,
+            )
             return await _finish(
                 board,
                 white.name,
@@ -142,6 +192,7 @@ async def play_game(
                 "illegal_move",
                 on_event,
                 game_id,
+                error=f"illegal move: {move}",
             )
 
         san = board.san(move)

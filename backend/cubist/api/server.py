@@ -9,10 +9,18 @@ Routes:
   WS   /ws                    live event stream
 """
 
+import logging
+import os
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from cubist.api.routes import router
 from cubist.api.websocket import bus
+
+logging.basicConfig(
+    level=os.environ.get("CUBIST_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 app = FastAPI(title="Cubist")
 app.include_router(router, prefix="/api")

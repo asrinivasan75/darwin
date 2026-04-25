@@ -3,7 +3,20 @@
     "allow": [
       "Bash(pdflatex -interaction=nonstopmode proposal.tex)",
       "Bash(rm -f proposal.aux proposal.log proposal.out proposal.toc)",
-      "Bash(sqlite3 cubist.db \"SELECT id, number, champion_before, champion_after, started_at, finished_at FROM generations;\")"
+      "Bash(sqlite3 cubist.db \"SELECT id, number, champion_before, champion_after, started_at, finished_at FROM generations;\")",
+      "Bash(python -c \"from google.genai import types as t; import inspect; print\\([n for n in dir\\(t\\) if 'hink' in n.lower\\(\\) or 'easoning' in n.lower\\(\\)]\\)\")",
+      "Bash(python -c \"from google.genai import types as t; print\\(list\\(t.ThinkingLevel\\)\\)\")",
+      "Bash(python -c \"from google.genai import types as t; help\\(t.ThinkingConfig\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -m pytest tests/test_builder.py tests/test_strategist.py -x --no-header -q)",
+      "Bash(python -c \"import pytest\")",
+      "Bash(/opt/anaconda3/bin/pytest tests/test_builder.py tests/test_strategist.py -x --no-header -q)",
+      "Bash(.venv/bin/python -m pip install pytest pytest-asyncio -q)",
+      "Bash(uv pip *)",
+      "Bash(.venv/bin/python -m pytest tests/test_builder.py tests/test_strategist.py -x --no-header -q)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest tests/ -x --no-header -q)",
+      "Bash(.venv/bin/python -m pytest tests/ --no-header -q)"
     ]
   }
 }

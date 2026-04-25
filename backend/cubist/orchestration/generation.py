@@ -7,10 +7,13 @@ strategist -> 5 builders (parallel) -> validator -> tournament -> selection
 import asyncio
 import inspect
 import json
+import logging
 from datetime import datetime
 
 from cubist.agents.builder import build_engine, validate_engine
 from cubist.agents.strategist import propose_questions
+
+log = logging.getLogger("cubist.orchestration")
 from cubist.api.websocket import bus
 from cubist.config import settings
 from cubist.engines.base import Engine
@@ -34,8 +37,10 @@ async def run_generation(champion: Engine, generation_number: int) -> Engine:
         }
     )
 
+    log.info("generation %d start champion=%s", generation_number, champion.name)
     questions = await propose_questions(_read_source(champion), [])
     for q in questions:
+        log.info("strategist q%d category=%s text=%s", q.index, q.category, q.text)
         await bus.emit(
             {
                 "type": "strategist.question",
@@ -56,6 +61,7 @@ async def run_generation(champion: Engine, generation_number: int) -> Engine:
     candidates: list[Engine] = []
     for q, p in zip(questions, paths):
         if isinstance(p, Exception):
+            log.error("builder failed q%d category=%s error=%s", q.index, q.category, p)
             await bus.emit(
                 {
                     "type": "builder.completed",
@@ -68,6 +74,13 @@ async def run_generation(champion: Engine, generation_number: int) -> Engine:
             continue
         ok, err = await validate_engine(p)
         name = p.stem
+        log.info(
+            "validator q%d engine=%s ok=%s err=%s",
+            q.index,
+            name,
+            ok,
+            err,
+        )
         await bus.emit(
             {
                 "type": "builder.completed",

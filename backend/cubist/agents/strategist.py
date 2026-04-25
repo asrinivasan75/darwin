@@ -13,12 +13,15 @@ dashboard — keep it readable.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from cubist.config import settings
 from cubist.llm import complete
+
+log = logging.getLogger("cubist.strategist")
 
 CATEGORIES = ["prompt", "search", "book", "evaluation", "sampling"]
 
@@ -176,6 +179,12 @@ async def propose_questions(
         "`questions` array using this shape: "
         '{"questions":[{"category":"prompt","text":"..."}, ...]}.'
     )
+    log.info(
+        "strategist start model=%s history=%d champion_chars=%d",
+        settings.strategist_model,
+        len(history),
+        len(champion_code),
+    )
     content = await complete(
         model=settings.strategist_model,
         system="You are an expert chess engine designer.",
@@ -184,16 +193,24 @@ async def propose_questions(
         tools=[TOOL],
     )
 
+    block_kinds = [getattr(b, "type", "?") for b in content]
+    log.info("strategist response blocks=%s", block_kinds)
+
     for block in content:
         if getattr(block, "type", None) == "tool_use" and block.name == "submit_questions":
-            return _validated_questions(block.input["questions"])
+            qs = _validated_questions(block.input["questions"])
+            log.info("strategist tool_use ok categories=%s", [q.category for q in qs])
+            return qs
 
     text = "\n".join(
         block.text for block in content if getattr(block, "type", None) == "text" and block.text
     )
+    log.info("strategist falling back to text parse, text_chars=%d", len(text))
     questions = _questions_from_text(text)
     if questions is not None:
+        log.info("strategist text parse ok categories=%s", [q.category for q in questions])
         return questions
 
     excerpt = text[:200].replace("\n", " ")
+    log.error("strategist parse failed excerpt=%r", excerpt)
     raise RuntimeError(f"strategist did not return tool_use or parseable questions: {excerpt!r}")
