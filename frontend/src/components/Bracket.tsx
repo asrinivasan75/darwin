@@ -1,18 +1,9 @@
 /**
  * Bracket.tsx — round-robin tournament result matrix for the current generation.
  *
- * Shows all pairings as a 2D table where rows are the "white" engine and
- * columns are the "black" engine. Each cell fills in with W / L / D as
- * {@link GameFinished} events arrive. Diagonal cells (same engine vs itself)
- * are grayed out. The total-points column (wins×1 + draws×0.5) is always
- * shown and updates live.
- *
- * The current champion's row and column are highlighted in blue so judges can
- * immediately see how the baseline performs against challengers.
- *
- * @listens {GenerationStarted}  - identifies the current generation and champion
- * @listens {BuilderCompleted}   - populates the engine roster (ok=true only)
- * @listens {GameFinished}       - fills in result cells
+ * Aggregates head-to-head pair scores (white-vs-black + black-vs-white) into
+ * a single cell so the matrix is symmetric. The reigning champion's row and
+ * column are tinted bronze.
  *
  * @module Bracket
  */
@@ -23,26 +14,13 @@ import type {
   BuilderCompleted,
   GameFinished,
 } from "../api/events";
+import { PanelHead, EmptyPlot } from "./LiveBoards";
 
-/** Props accepted by {@link Bracket}. */
 interface BracketProps {
-  /** Full accumulated event log from {@link useEventStream}. */
   events: DarwinEvent[];
 }
 
-/**
- * Bracket — renders the round-robin result table for the most recent
- * generation, updating cells in real time as GameFinished events arrive.
- *
- * @param props.events - the full accumulated event log from useEventStream()
- * @returns a dark card with an engine-vs-engine result grid
- */
 export default function Bracket({ events }: BracketProps) {
-  // Find the LATEST generation.started boundary so we can scope every
-  // downstream lookup (builders, finished games) to just the current
-  // generation. Without this, gen 1's accepted engines and finished
-  // games leak into gen 2's bracket — names overlap and points read
-  // as 0/garbage.
   let lastBoundary = -1;
   for (let i = 0; i < events.length; i++) {
     const t = events[i].type;
@@ -61,26 +39,20 @@ export default function Bracket({ events }: BracketProps) {
 
   if (!currentGen) {
     return (
-      <div className="bg-gray-800 rounded-lg p-4">
-        <h2 className="text-xs font-semibold tracking-wider text-gray-400 uppercase mb-3">
-          Tournament Bracket
-        </h2>
-        <p className="text-gray-500 text-sm italic">
-          Waiting for generation to start…
-        </p>
+      <div className="panel flex flex-col p-6">
+        <PanelHead title="Tournament" />
+        <EmptyPlot
+          message="No tournament running."
+          hint="Pairings appear once the strategist's questions become engines."
+        />
       </div>
     );
   }
 
-  // Collect all successfully built engines for the current generation.
-  // Scoped to currentEvents (post-boundary) so gen 1's accepted
-  // candidates don't appear in gen 2's roster.
   const builderEvents = currentEvents.filter(
-    (e): e is BuilderCompleted =>
-      e.type === "builder.completed" && e.ok,
+    (e): e is BuilderCompleted => e.type === "builder.completed" && e.ok,
   );
 
-  // The roster: champion first, then all ok candidates in question_index order
   const engines: string[] = [
     currentGen.champion,
     ...builderEvents
@@ -88,25 +60,10 @@ export default function Bracket({ events }: BracketProps) {
       .map((b) => b.engine_name),
   ];
 
-  // Finished games for this generation — scoped to currentEvents so a
-  // finished gen-1 game doesn't fill in a gen-2 cell when the engine
-  // names happen to share a prefix.
   const finishedGames = currentEvents.filter(
     (e): e is GameFinished => e.type === "game.finished",
   );
 
-  /**
-   * Aggregate the head-to-head matchup between rowEngine and colEngine
-   * across both color games. Returns the row engine's score, total
-   * games played in this pairing, and a label like "1.5/2".
-   *
-   * Previous version showed per-color cells (W/L/D for one specific
-   * color assignment). That was confusing because the same pair could
-   * show "W" in one cell and "D" in the symmetric cell — both are
-   * correct (different games, white has advantage), but visually it
-   * read as inconsistent. Aggregate is symmetric and matches how
-   * round-robin standings are usually presented.
-   */
   function pairScore(
     rowEngine: string,
     colEngine: string,
@@ -127,24 +84,12 @@ export default function Bracket({ events }: BracketProps) {
     return { score, played };
   }
 
-  /**
-   * Format the aggregate score as `n.n/m`. "1.5/2" reads cleanly and
-   * shows partial progress when the matchup isn't finished yet.
-   */
-  function formatPairCell(
-    score: number,
-    played: number,
-  ): string | null {
+  function formatPairCell(score: number, played: number): string | null {
     if (played === 0) return null;
-    // Trim trailing ".0" — "1/2" reads better than "1.0/2"
     const s = score === Math.trunc(score) ? `${score}` : `${score.toFixed(1)}`;
     return `${s}/${played}`;
   }
 
-  /**
-   * Computes total tournament points for an engine — sum of all its
-   * pair-aggregate scores across the cohort.
-   */
   function totalPoints(engine: string): number {
     let points = 0;
     for (const opp of engines) {
@@ -154,112 +99,181 @@ export default function Bracket({ events }: BracketProps) {
     return points;
   }
 
+  // For total-points "tally" bars
+  const maxTotal = Math.max(
+    1,
+    ...engines.map((e) => totalPoints(e)),
+  );
+
   return (
-    <div className="bg-gray-800 rounded-lg p-4 overflow-x-auto">
-      <h2 className="text-xs font-semibold tracking-wider text-gray-400 uppercase mb-3">
-        Tournament Bracket — Gen {currentGen.number}
-      </h2>
+    <div className="panel flex flex-col overflow-hidden p-6">
+      <PanelHead
+        title={`Tournament · gen ${currentGen.number}`}
+        meta={`${engines.length} engines`}
+      />
 
-      <table className="text-xs border-collapse w-full">
-        <thead>
-          <tr>
-            {/* Empty corner cell */}
-            <th className="p-1 text-gray-500 text-left font-normal w-32">
-              vs →
-            </th>
-            {engines.map((eng) => (
+      <div className="mt-5 overflow-x-auto">
+        <table className="w-full border-separate border-spacing-y-1 text-[11.5px]">
+          <thead>
+            <tr>
               <th
-                key={eng}
-                className={`p-1 text-center font-mono font-normal max-w-[60px] ${
-                  eng === currentGen.champion
-                    ? "text-blue-400"
-                    : "text-gray-400"
-                }`}
-                title={eng}
+                className="px-2 pb-3 pt-1 text-left text-[10px] font-normal uppercase tracking-woodland"
+                style={{ color: "var(--ink-faint)", width: 150 }}
               >
-                {shortName(eng)}
+                vs ↓
               </th>
-            ))}
-            <th className="p-1 text-center text-gray-400 font-semibold">Pts</th>
-          </tr>
-        </thead>
-        <tbody>
-          {engines.map((rowEng) => (
-            <tr
-              key={rowEng}
-              className={
-                rowEng === currentGen.champion ? "bg-blue-900/20" : ""
-              }
-            >
-              {/* Row engine label */}
-              <td
-                className={`p-1 font-mono truncate max-w-[120px] ${
-                  rowEng === currentGen.champion
-                    ? "text-blue-400"
-                    : "text-gray-300"
-                }`}
-                title={rowEng}
-              >
-                {shortName(rowEng)}
-              </td>
-
-              {/* One cell per column engine */}
-              {engines.map((colEng) => {
-                if (rowEng === colEng) {
-                  // Diagonal — no self-play
-                  return (
-                    <td
-                      key={colEng}
-                      className="p-1 text-center bg-gray-700 text-gray-600"
-                    >
-                      —
-                    </td>
-                  );
-                }
-                const { score, played } = pairScore(rowEng, colEng);
-                const cellLabel = formatPairCell(score, played);
-                // Color: green if won the matchup outright (>50%),
-                // red if lost (<50%), yellow if exactly tied (50%),
-                // dim gray if no games played yet.
-                let colorClass = "text-gray-600";
-                if (played > 0) {
-                  if (score > played / 2) colorClass = "text-green-400";
-                  else if (score < played / 2) colorClass = "text-red-400";
-                  else colorClass = "text-yellow-400";
-                }
-                return (
-                  <td
-                    key={colEng}
-                    className={`p-1 text-center font-semibold ${colorClass}`}
+              {engines.map((eng) => (
+                <th
+                  key={eng}
+                  className="px-1 pb-3 pt-1 text-center font-normal"
+                  style={{
+                    color:
+                      eng === currentGen.champion
+                        ? "var(--bronze-300)"
+                        : "var(--ink-muted)",
+                  }}
+                  title={eng}
+                >
+                  <span
+                    className="font-mono-tab text-[10.5px] uppercase tracking-[0.06em]"
+                    style={{
+                      writingMode: "vertical-rl",
+                      transform: "rotate(180deg)",
+                      display: "inline-block",
+                      maxHeight: 70,
+                      whiteSpace: "nowrap",
+                    }}
                   >
-                    {cellLabel ?? <span className="text-gray-600">·</span>}
-                  </td>
-                );
-              })}
-
-              {/* Total points */}
-              <td className="p-1 text-center font-bold text-gray-200">
-                {totalPoints(rowEng)}
-              </td>
+                    {shortName(eng)}
+                  </span>
+                </th>
+              ))}
+              <th
+                className="px-2 pb-3 pt-1 text-right text-[10px] font-normal uppercase tracking-woodland"
+                style={{ color: "var(--ink-faint)" }}
+              >
+                pts
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {engines.map((rowEng) => {
+              const isChamp = rowEng === currentGen.champion;
+              const total = totalPoints(rowEng);
+              return (
+                <tr
+                  key={rowEng}
+                  style={{
+                    background: isChamp
+                      ? "linear-gradient(90deg, rgba(201,168,118,0.06), transparent 70%)"
+                      : "transparent",
+                  }}
+                >
+                  <td
+                    className="font-mono-tab truncate rounded-l px-2 py-1.5 text-[11.5px]"
+                    style={{
+                      color: isChamp
+                        ? "var(--bronze-300)"
+                        : "var(--ink-soft)",
+                      maxWidth: 150,
+                    }}
+                    title={rowEng}
+                  >
+                    {isChamp && (
+                      <span
+                        aria-hidden
+                        className="mr-1.5 inline-block"
+                        style={{ color: "var(--bronze-400)" }}
+                      >
+                        ✦
+                      </span>
+                    )}
+                    {shortName(rowEng)}
+                  </td>
+
+                  {engines.map((colEng) => {
+                    if (rowEng === colEng) {
+                      return (
+                        <td
+                          key={colEng}
+                          className="px-1 py-1.5 text-center font-mono-tab"
+                          style={{
+                            background: "rgba(232,226,211,0.025)",
+                            color: "var(--ink-faint)",
+                          }}
+                        >
+                          ·
+                        </td>
+                      );
+                    }
+                    const { score, played } = pairScore(rowEng, colEng);
+                    const cellLabel = formatPairCell(score, played);
+
+                    let color = "var(--ink-faint)";
+                    if (played > 0) {
+                      if (score > played / 2) color = "var(--moss-300)";
+                      else if (score < played / 2) color = "var(--ember-500)";
+                      else color = "var(--bronze-300)";
+                    }
+
+                    return (
+                      <td
+                        key={colEng}
+                        className="font-mono-tab px-1 py-1.5 text-center"
+                        style={{ color }}
+                      >
+                        {cellLabel ?? (
+                          <span style={{ color: "var(--ink-faint)" }}>·</span>
+                        )}
+                      </td>
+                    );
+                  })}
+
+                  <td
+                    className="rounded-r px-2 py-1.5 text-right"
+                    style={{ minWidth: 80 }}
+                  >
+                    <div className="flex items-center justify-end gap-2">
+                      <div
+                        className="h-1 w-12 overflow-hidden rounded-full"
+                        style={{ background: "rgba(232,226,211,0.06)" }}
+                        aria-hidden
+                      >
+                        <div
+                          className="h-full origin-left"
+                          style={{
+                            width: `${(total / maxTotal) * 100}%`,
+                            background: isChamp
+                              ? "linear-gradient(90deg, var(--bronze-500), var(--bronze-300))"
+                              : "linear-gradient(90deg, var(--moss-600), var(--moss-400))",
+                            transform: "scaleX(1)",
+                            animation: "tally 0.7s ease-out",
+                          }}
+                        />
+                      </div>
+                      <span
+                        className="font-display-tight"
+                        style={{
+                          fontSize: 15,
+                          color: isChamp
+                            ? "var(--bronze-300)"
+                            : "var(--ink)",
+                        }}
+                      >
+                        {total}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Abbreviates an engine name to fit in a narrow table column.
- * "gen1-book-a3f" → "g1-book", "baseline-v0" → "base-v0"
- */
 function shortName(name: string): string {
-  // Trim trailing hash-like suffix (e.g. "-a3f") to keep names readable
-  return name.replace(/-[a-z0-9]{3}$/, "").slice(0, 10);
+  return name.replace(/-[a-z0-9]{3}$/, "").slice(0, 12);
 }
-
-// resultClass removed — replaced by inline color logic in the cell
-// renderer when bracket switched from per-color W/L/D cells to
-// pair-aggregate score cells.

@@ -1,37 +1,25 @@
 /**
  * EloChart.tsx — champion Elo rating across generations.
  *
- * Standard chess Elo, K=32. Baseline-v0 starts at 1500 (the chess
- * midpoint). Each `generation.finished` event carries an `elo_delta`
- * — the difference between the new champion's post-tournament rating
- * and its pre-tournament rating — and we accumulate that into a line
- * the dashboard plots gen-over-gen.
- *
- * Reading the chart:
- *   - line climbs    new champions are scoring better than expected
- *                     against the existing field
- *   - line stalls    cohort is plateaued, candidates not exceeding
- *                     incumbent's Elo
- *   - line dips       weaker engine took the title via random
- *                     tiebreak / variance — should self-correct in 1-2
- *                     gens as the over-rated champion loses against
- *                     better candidates
- *
- * @listens {GenerationFinished}  - each event appends one data point
+ * Standard chess Elo, K=32. Baseline-v0 starts at 1500 (chess midpoint).
+ * Plots each generation's actual post-tournament Elo, falling back to
+ * cumulative-delta for legacy payloads.
  *
  * @module EloChart
  */
 
 import {
-  LineChart,
   Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  Area,
+  ComposedChart,
 } from "recharts";
 import type { DarwinEvent, GenerationFinished } from "../api/events";
+import { PanelHead, EmptyPlot } from "./LiveBoards";
 
 interface EloChartProps {
   events: DarwinEvent[];
@@ -49,26 +37,15 @@ export default function EloChart({ events }: EloChartProps) {
     (e): e is GenerationFinished => e.type === "generation.finished",
   );
 
-  // Gen 0 = the seeded baseline at 1500 — the chess Elo midpoint and
-  // the value `seed_baseline.py` writes into EngineRow.
   const data: EloPoint[] = [
     { gen: 0, elo: 1500, champion: "baseline-v0", promoted: false },
   ];
 
-  // Plot each generation's champion's actual post-tournament Elo —
-  // *not* a cumulative sum of elo_deltas. The deltas belong to
-  // *different* engines from gen to gen (whoever wins that gen), so
-  // adding them isn't meaningful. The ratings dict (added in this
-  // commit) gives us the exact value to plot directly.
-  //
-  // Falls back to (prev + elo_delta) for older payloads that pre-date
-  // the `ratings` field, so historical event logs still render.
   for (const ev of finishedEvents) {
     let elo: number;
     if (ev.ratings && ev.ratings[ev.new_champion] !== undefined) {
       elo = ev.ratings[ev.new_champion];
     } else {
-      // Legacy fallback — assume continuous (incorrect but better than nothing).
       const prev = data[data.length - 1].elo;
       elo = prev + ev.elo_delta;
     }
@@ -80,74 +57,170 @@ export default function EloChart({ events }: EloChartProps) {
     });
   }
 
-  // Y axis padding: ±30 points around min/max, snapped to nearest 50.
   const eloValues = data.map((d) => d.elo);
   const minElo = Math.floor((Math.min(...eloValues) - 30) / 50) * 50;
   const maxElo = Math.ceil((Math.max(...eloValues) + 30) / 50) * 50;
+  const peak = Math.max(...eloValues);
+  const trough = Math.min(...eloValues);
+  const current = data[data.length - 1].elo;
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 flex flex-col">
-      <h2 className="text-xs font-semibold tracking-wider text-gray-400 uppercase mb-3">
-        Champion Elo (cumulative, K=32)
-      </h2>
+    <div className="panel flex flex-col p-6">
+      <PanelHead title="Champion Elo" meta="K = 32" />
 
       {finishedEvents.length === 0 ? (
-        <p className="text-gray-500 text-sm italic mt-2">
-          Waiting for first generation to finish…
-        </p>
+        <EmptyPlot
+          message="No generations finished yet."
+          hint="The line begins once a generation completes."
+        />
       ) : (
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart
-            data={data}
-            margin={{ top: 4, right: 8, left: -10, bottom: 0 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-            <XAxis
-              dataKey="gen"
-              tick={{ fill: "#9ca3af", fontSize: 11 }}
-              label={{
-                value: "Generation",
-                position: "insideBottomRight",
-                offset: -4,
-                fill: "#6b7280",
-                fontSize: 10,
-              }}
+        <>
+          {/* A small typographic readout alongside the chart */}
+          <div className="mt-5 flex items-end gap-6">
+            <div>
+              <div
+                className="text-[9.5px] uppercase tracking-woodland"
+                style={{ color: "var(--ink-faint)" }}
+              >
+                now
+              </div>
+              <div
+                className="font-display-tight leading-none"
+                style={{ fontSize: 38, color: "var(--ink)" }}
+              >
+                {current.toFixed(0)}
+              </div>
+            </div>
+            <Stat label="peak" value={peak.toFixed(0)} />
+            <Stat label="trough" value={trough.toFixed(0)} />
+            <Stat
+              label="generations"
+              value={String(finishedEvents.length)}
             />
-            <YAxis
-              domain={[minElo, maxElo]}
-              tick={{ fill: "#9ca3af", fontSize: 11 }}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "#1f2937",
-                border: "1px solid #374151",
-                borderRadius: 6,
-                color: "#e5e7eb",
-                fontSize: 12,
-              }}
-              formatter={(value: number, _name, item) => {
-                const p = item.payload as EloPoint;
-                return [
-                  `${value}`,
-                  p.promoted ? `${p.champion} (promoted)` : p.champion,
-                ];
-              }}
-              labelFormatter={(label) => `Gen ${label}`}
-            />
-            <Line
-              type="monotone"
-              dataKey="elo"
-              stroke="#3b82f6"
-              strokeWidth={2}
-              dot={{ fill: "#3b82f6", r: 4 }}
-              activeDot={{ r: 6, fill: "#60a5fa" }}
-              isAnimationActive={true}
-              animationDuration={800}
-              animationEasing="ease-out"
-            />
-          </LineChart>
-        </ResponsiveContainer>
+          </div>
+
+          <div className="mt-4 -mx-2">
+            <ResponsiveContainer width="100%" height={210}>
+              <ComposedChart
+                data={data}
+                margin={{ top: 8, right: 12, left: -8, bottom: 0 }}
+              >
+                <defs>
+                  <linearGradient id="elo-area" x1="0" y1="0" x2="0" y2="1">
+                    <stop
+                      offset="0%"
+                      stopColor="var(--moss-500)"
+                      stopOpacity={0.45}
+                    />
+                    <stop
+                      offset="100%"
+                      stopColor="var(--moss-700)"
+                      stopOpacity={0}
+                    />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid
+                  strokeDasharray="2 5"
+                  stroke="rgba(232,226,211,0.07)"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="gen"
+                  tick={{
+                    fill: "var(--ink-faint)",
+                    fontSize: 10.5,
+                    fontFamily: "IBM Plex Mono",
+                  }}
+                  tickLine={false}
+                  axisLine={{ stroke: "rgba(232,226,211,0.1)" }}
+                />
+                <YAxis
+                  domain={[minElo, maxElo]}
+                  tick={{
+                    fill: "var(--ink-faint)",
+                    fontSize: 10.5,
+                    fontFamily: "IBM Plex Mono",
+                  }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  cursor={{
+                    stroke: "rgba(201,168,118,0.3)",
+                    strokeDasharray: "3 3",
+                  }}
+                  contentStyle={{
+                    background:
+                      "linear-gradient(180deg, rgba(40,48,42,0.97), rgba(28,34,30,0.97))",
+                    border: "1px solid rgba(232,226,211,0.13)",
+                    borderRadius: 8,
+                    color: "var(--ink)",
+                    fontSize: 11.5,
+                    fontFamily: "Instrument Sans",
+                    boxShadow: "0 12px 28px -16px rgba(0,0,0,0.6)",
+                  }}
+                  formatter={(value: number, _name, item) => {
+                    const p = item.payload as EloPoint;
+                    return [
+                      `${value}`,
+                      p.promoted ? `${p.champion} (promoted)` : p.champion,
+                    ];
+                  }}
+                  labelFormatter={(label) => `Generation ${label}`}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="elo"
+                  stroke="none"
+                  fill="url(#elo-area)"
+                  isAnimationActive
+                  animationDuration={800}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="elo"
+                  stroke="var(--moss-400)"
+                  strokeWidth={2}
+                  dot={{
+                    fill: "var(--bronze-400)",
+                    stroke: "var(--bark-850)",
+                    strokeWidth: 2,
+                    r: 4,
+                  }}
+                  activeDot={{
+                    r: 6,
+                    fill: "var(--bronze-300)",
+                    stroke: "var(--bark-850)",
+                    strokeWidth: 2,
+                  }}
+                  isAnimationActive={true}
+                  animationDuration={800}
+                  animationEasing="ease-out"
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </>
       )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div
+        className="text-[9.5px] uppercase tracking-woodland"
+        style={{ color: "var(--ink-faint)" }}
+      >
+        {label}
+      </div>
+      <div
+        className="font-mono-tab leading-none"
+        style={{ fontSize: 18, color: "var(--ink-soft)", marginTop: 4 }}
+      >
+        {value}
+      </div>
     </div>
   );
 }

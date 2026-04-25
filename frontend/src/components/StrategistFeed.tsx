@@ -1,19 +1,6 @@
 /**
  * StrategistFeed.tsx — live feed of LLM strategist questions and builder outcomes.
  *
- * Renders one card per {@link StrategistQuestion} event. Each card shows:
- *   - A colour-coded category badge (book / prompt / search / evaluation / sampling)
- *   - The question text proposed by the strategist LLM
- *   - A status indicator that updates when the matching {@link BuilderCompleted}
- *     event arrives (pending → success or failure)
- *   - The generated engine name on success
- *
- * This panel has the highest demo value: judges watch questions appear one by
- * one and builders flip to green as candidate engines are generated.
- *
- * @listens {StrategistQuestion} - one card per question (index 0–4)
- * @listens {BuilderCompleted}   - updates the status indicator on the matching card
- *
  * @module StrategistFeed
  */
 
@@ -22,41 +9,26 @@ import type {
   StrategistQuestion,
   BuilderCompleted,
 } from "../api/events";
+import { PanelHead, EmptyPlot } from "./LiveBoards";
 
-/** Props accepted by {@link StrategistFeed}. */
 interface StrategistFeedProps {
-  /** Full accumulated event log from {@link useEventStream}. */
   events: DarwinEvent[];
 }
 
 /**
- * Maps each question category to a Tailwind background colour class so cards
- * are visually distinct at a glance on demo day.
+ * Per-category hue used for the left margin rule. One earthy color per
+ * category — the rule is the only category indicator now that the badge
+ * is gone.
  */
-const CATEGORY_COLORS: Record<StrategistQuestion["category"], string> = {
-  book:       "bg-green-700",
-  prompt:     "bg-purple-700",
-  search:     "bg-blue-700",
-  evaluation: "bg-orange-700",
-  sampling:   "bg-pink-700",
+const CATEGORY_DOT: Record<StrategistQuestion["category"], string> = {
+  book: "var(--moss-500)",
+  prompt: "var(--bronze-500)",
+  search: "#7d8aa0",
+  evaluation: "var(--bronze-300)",
+  sampling: "var(--moss-300)",
 };
 
-/**
- * StrategistFeed — displays the LLM strategist's improvement questions and
- * their corresponding builder outcomes for the current generation.
- *
- * @param props.events - the full accumulated event log from useEventStream()
- * @returns a scrollable column of question cards, newest at the bottom
- */
 export default function StrategistFeed({ events }: StrategistFeedProps) {
-  // Show only the CURRENT generation's questions/builders. Strategist
-  // and builder events use a per-gen index (0..N-1) that isn't unique
-  // across generations — so without this filter, gen 2's questions
-  // collide with gen 1's on the React `key={q.index}` and the panel
-  // appears to "stick" on the previous generation. We bound the
-  // visible window to "events emitted after the latest
-  // generation.started / generation.cancelled boundary" — same idea
-  // LiveBoards uses.
   let lastBoundary = -1;
   for (let i = 0; i < events.length; i++) {
     const t = events[i].type;
@@ -73,104 +45,194 @@ export default function StrategistFeed({ events }: StrategistFeedProps) {
     (e): e is BuilderCompleted => e.type === "builder.completed",
   );
 
-  /** Look up the builder result for a given question index, if it has arrived. */
   const builderFor = (index: number): BuilderCompleted | undefined =>
     builders.find((b) => b.question_index === index);
 
-  if (questions.length === 0) {
-    return (
-      <div className="bg-gray-800 rounded-lg p-4 flex flex-col">
-        <h2 className="text-xs font-semibold tracking-wider text-gray-400 uppercase mb-3">
-          Strategist Feed
-        </h2>
-        <p className="text-gray-500 text-sm italic mt-2">
-          Waiting for strategist…
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="bg-gray-800 rounded-lg p-4 flex flex-col">
-      <h2 className="text-xs font-semibold tracking-wider text-gray-400 uppercase mb-3">
-        Strategist Feed
-      </h2>
+    <div className="panel flex flex-col p-6">
+      <PanelHead
+        title="Strategist"
+        meta={
+          questions.length === 0
+            ? "no questions yet"
+            : `${questions.length} question${questions.length === 1 ? "" : "s"}`
+        }
+      />
 
-      <div className="flex flex-col gap-3 overflow-y-auto">
-        {questions.map((q) => {
-          const builder = builderFor(q.index);
-          return (
-            <QuestionCard key={q.index} question={q} builder={builder} />
-          );
-        })}
-      </div>
+      {questions.length === 0 ? (
+        <EmptyPlot
+          message="No strategist questions yet."
+          hint="Each generation, the LLM proposes up to five distinct improvement directions."
+        />
+      ) : (
+        <ol className="mt-5 flex flex-col gap-3">
+          {questions.map((q, i) => (
+            <QuestionCard
+              key={q.index}
+              question={q}
+              builder={builderFor(q.index)}
+              ordinal={i + 1}
+            />
+          ))}
+        </ol>
+      )}
     </div>
   );
 }
 
-// ── Internal sub-components ──────────────────────────────────────────────────
-
-/** Props for the individual question card. */
 interface QuestionCardProps {
   question: StrategistQuestion;
-  /** Undefined while the builder is still running. */
   builder: BuilderCompleted | undefined;
+  ordinal: number;
 }
 
-/**
- * Renders a single strategist question as a dark card with a category badge
- * and a status indicator on the right.
- *
- * @param props.question - the strategist question event
- * @param props.builder  - the corresponding builder.completed event (may be undefined)
- */
-function QuestionCard({ question, builder }: QuestionCardProps) {
-  const badgeColor = CATEGORY_COLORS[question.category];
+function QuestionCard({ question, builder, ordinal }: QuestionCardProps) {
+  const dot = CATEGORY_DOT[question.category];
+  const settled = builder !== undefined;
 
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-md p-3 flex items-start gap-3">
-      {/* Category badge */}
+    <li
+      className="bloom relative overflow-hidden rounded-lg p-4"
+      style={{
+        animationDelay: `${ordinal * 70}ms`,
+        background:
+          "linear-gradient(180deg, rgba(34,41,35,0.7), rgba(22,27,24,0.9))",
+        border: "1px solid var(--line)",
+      }}
+    >
+      {/* Left column rule, tinted by category — reads like a margin annotation */}
       <span
-        className={`${badgeColor} text-white text-xs font-semibold px-2 py-0.5 rounded shrink-0 mt-0.5 uppercase tracking-wide`}
-      >
-        {question.category}
-      </span>
+        aria-hidden
+        className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r"
+        style={{ background: dot, opacity: 0.7 }}
+      />
 
-      {/* Question text and engine name */}
-      <div className="flex-1 min-w-0">
-        <p className="text-gray-200 text-sm leading-snug">{question.text}</p>
-        {builder?.ok && (
-          <p className="text-gray-400 text-xs mt-1 truncate">
-            → {builder.engine_name}
+      <div className="flex items-start gap-4 pl-3">
+        <div className="flex w-10 shrink-0 flex-col items-start pt-0.5">
+          <span
+            className="font-display italic leading-none"
+            style={{ fontSize: 22, color: "var(--ink-faint)" }}
+          >
+            {String(ordinal).padStart(2, "0")}
+          </span>
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <p
+            className="font-display text-[15.5px] leading-snug"
+            style={{
+              color: "var(--ink)",
+              fontVariationSettings:
+                '"opsz" 24, "SOFT" 50, "wght" 380',
+            }}
+          >
+            {question.text}
           </p>
-        )}
-        {builder && !builder.ok && (
-          <p className="text-red-400 text-xs mt-1 truncate">
-            ✗ {builder.error}
-          </p>
-        )}
+
+          {builder?.ok && (
+            <p
+              className="font-mono-tab mt-2 truncate text-[11.5px]"
+              style={{ color: "var(--bronze-300)" }}
+              title={builder.engine_name}
+            >
+              → <span className="italic">{builder.engine_name}</span>
+            </p>
+          )}
+          {builder && !builder.ok && (
+            <p
+              className="mt-2 truncate text-[11.5px] italic"
+              style={{ color: "var(--ember-500)" }}
+              title={builder.error ?? undefined}
+            >
+              rejected — {builder.error}
+            </p>
+          )}
+          {!builder && (
+            <p
+              className="mt-2 text-[11px] uppercase tracking-woodland"
+              style={{ color: "var(--ink-faint)" }}
+            >
+              <span className="firefly mr-1.5 align-middle" />
+              building
+            </p>
+          )}
+        </div>
+
+        <StatusGlyph builder={builder} settled={settled} />
       </div>
-
-      {/* Status indicator */}
-      <StatusIcon builder={builder} />
-    </div>
+    </li>
   );
 }
 
-/**
- * Small icon showing whether the builder is pending, succeeded, or failed.
- *
- * @param props.builder - the builder.completed event, or undefined if still running
- */
-function StatusIcon({ builder }: { builder: BuilderCompleted | undefined }) {
-  if (!builder) {
-    // Pulsing dot: builder is still generating code
+function StatusGlyph({
+  builder,
+  settled,
+}: {
+  builder: BuilderCompleted | undefined;
+  settled: boolean;
+}) {
+  if (!settled) {
     return (
-      <span className="shrink-0 mt-1 w-2.5 h-2.5 rounded-full bg-gray-500 animate-pulse" />
+      <span
+        aria-label="pending"
+        className="mt-1 inline-block h-3 w-3 shrink-0 rounded-full"
+        style={{
+          background:
+            "radial-gradient(circle at 30% 30%, rgba(232,226,211,0.5), rgba(232,226,211,0.05))",
+          border: "1px solid var(--line-strong)",
+        }}
+      />
     );
   }
-  if (builder.ok) {
-    return <span className="shrink-0 mt-0.5 text-green-400 text-base">✓</span>;
+  if (builder!.ok) {
+    return (
+      <svg
+        aria-label="accepted"
+        className="mt-1 shrink-0"
+        width={18}
+        height={18}
+        viewBox="0 0 18 18"
+      >
+        <circle
+          cx={9}
+          cy={9}
+          r={8}
+          fill="rgba(63,87,57,0.25)"
+          stroke="var(--moss-500)"
+        />
+        <path
+          d="M5 9.6 L8 12 L13 6.5"
+          fill="none"
+          stroke="var(--moss-300)"
+          strokeWidth={1.6}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
   }
-  return <span className="shrink-0 mt-0.5 text-red-400 text-base">✗</span>;
+  return (
+    <svg
+      aria-label="rejected"
+      className="mt-1 shrink-0"
+      width={18}
+      height={18}
+      viewBox="0 0 18 18"
+    >
+      <circle
+        cx={9}
+        cy={9}
+        r={8}
+        fill="rgba(168,80,64,0.18)"
+        stroke="var(--ember-600)"
+      />
+      <path
+        d="M6 6 L12 12 M12 6 L6 12"
+        fill="none"
+        stroke="var(--ember-500)"
+        strokeWidth={1.6}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
 }

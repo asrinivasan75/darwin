@@ -1,20 +1,9 @@
 /**
  * LiveBoards.tsx — grid of mini chess boards, one per active game.
  *
- * Replaces the single-board {@link LiveBoard} with a grid of up to
- * ``MAX_BOARDS`` boards. Each board tracks the latest position of one
- * ``game_id`` derived from the event log. Games marked finished by a
- * ``game.finished`` event remain visible (with their final FEN and a
- * result chip) until pushed off the grid by newer games — judges can
- * still see the just-completed game while the next pair gets going.
- *
- * Rationale: a tournament can have ~12+ games per generation playing
- * concurrently. A single "hot" board (LiveBoard) buries that parallelism.
- * Showing N boards at once makes the round-robin visible.
- *
- * @listens {GameMove}        — updates a per-game FEN
- * @listens {GameFinished}    — marks a game as final
- * @listens {GenerationStarted | GenerationCancelled} — clears the grid
+ * Listens to GameMove / GameFinished and folds them into per-game state
+ * scoped to the latest generation boundary. See the original module
+ * doc for the rationale around showing every board at once.
  *
  * @module LiveBoards
  */
@@ -27,15 +16,8 @@ interface LiveBoardsProps {
   events: DarwinEvent[];
 }
 
-// Max number of boards rendered simultaneously. With games_per_pairing=2
-// and 3 engines (baseline + 2 candidates), the round-robin schedules
-// 3*2*2 = 12 concurrent games. We render all of them so a judge can see
-// the full tournament at once. Cap is a safety net in case a future
-// config bumps the cohort to 4 candidates (4*3*2 = 24 games — at that
-// point we'd want a different layout anyway).
-const MAX_BOARDS = 12;
+const MAX_BOARDS = 16;
 
-/** Per-board state derived from the event log. */
 interface GameState {
   game_id: number;
   fen: string;
@@ -46,13 +28,9 @@ interface GameState {
   finished: boolean;
   result: string | null;
   termination: string | null;
-  /** Index in the events array of the last update — used to sort recency. */
   last_event_idx: number;
 }
 
-// Major/minor pieces. Pawn isn't here on purpose: in SAN, pawn moves
-// have no leading piece letter (`e4`, `exd5`, `e8=Q`), so the pawn case
-// is detected by absence — see `verboseMove` below.
 const PIECE_NAMES: Record<string, string> = {
   K: "king",
   Q: "queen",
@@ -61,18 +39,6 @@ const PIECE_NAMES: Record<string, string> = {
   N: "knight",
 };
 
-/**
- * Convert a SAN move into a human-readable phrase.
- *
- * Examples:
- *   "Rxb3+"  → "black rook takes b3"
- *   "O-O"    → "white castles kingside"
- *   "e4"     → "white pawn to e4"
- *   "exd5"   → "white e-pawn takes d5"   // file disambiguates the pawn
- *   "e8=Q"   → "white pawn to e8 and promotes to queen"
- *
- * Best-effort — unparseable inputs fall back to the raw SAN.
- */
 function verboseMove(san: string, color: "white" | "black"): string {
   if (!san) return "";
   let s = san.replace(/[+#]$/, "");
@@ -92,9 +58,6 @@ function verboseMove(san: string, color: "white" | "black"): string {
     piece = PIECE_NAMES[first];
     s = s.slice(1);
   } else {
-    // Pawn move. Pawn captures always lead with the source file
-    // (e.g. "exd5") — keep it as part of the piece name so it isn't
-    // swallowed by the disambiguation strip below.
     if (s.length > 2 && /^[a-h]/.test(s) && s[1] === "x") {
       piece = `${s[0]}-pawn`;
       s = s.slice(1);
@@ -112,17 +75,8 @@ function verboseMove(san: string, color: "white" | "black"): string {
   return `${color} ${piece} ${verb} ${dest}${promotion}`;
 }
 
-/**
- * LiveBoards — fold the event log into a per-game-id state map and render
- * up to ``MAX_BOARDS`` of the most recently active boards.
- *
- * On ``generation.started`` or ``generation.cancelled`` we drop everything
- * — those terminal events delimit the boundary of one tournament.
- */
 export default function LiveBoards({ events }: LiveBoardsProps) {
   const games = useMemo<GameState[]>(() => {
-    // Find the latest "boundary" event — anything before it is from a
-    // previous (or cancelled) generation and not worth showing.
     let lastBoundary = -1;
     for (let i = 0; i < events.length; i++) {
       const t = events[i].type;
@@ -161,8 +115,6 @@ export default function LiveBoards({ events }: LiveBoardsProps) {
             last_event_idx: i,
           });
         } else {
-          // We received finished without any moves — render an empty board
-          // anyway so the result is at least visible.
           map.set(f.game_id, {
             game_id: f.game_id,
             fen: "start",
@@ -179,35 +131,37 @@ export default function LiveBoards({ events }: LiveBoardsProps) {
       }
     }
 
-    // Stable layout: sort by game_id ascending so each game keeps its
-    // grid slot from start to finish. A game that lands in the top-left
-    // when the tournament starts stays there until it ends — matches
-    // how a human would expect to follow a row of games on a chess
-    // tournament hall display.
     return Array.from(map.values())
       .sort((a, b) => a.game_id - b.game_id)
       .slice(0, MAX_BOARDS);
   }, [events]);
 
   return (
-    <div className="bg-gray-800 rounded-lg p-4 col-span-full">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-xs font-semibold tracking-wider text-gray-400 uppercase">
-          Live Boards
-        </h2>
-        <span className="text-xs text-gray-500">
-          {games.length === 0 ? "no active games" : `${games.length} active`}
-        </span>
-      </div>
+    <div className="panel p-6">
+      <PanelHead
+        title="Live boards"
+        meta={
+          games.length === 0
+            ? "no games yet"
+            : `${games.length} game${games.length === 1 ? "" : "s"}`
+        }
+      />
 
       {games.length === 0 ? (
-        <p className="text-gray-500 text-xs italic text-center py-12">
-          Waiting for first game…
-        </p>
+        <EmptyPlot
+          message="No game in progress."
+          hint="Start a generation to begin the tournament."
+        />
       ) : (
-        <div className="flex flex-wrap gap-4">
-          {games.map((g) => (
-            <BoardCard key={g.game_id} game={g} />
+        <div
+          className="mt-5 gap-4"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          }}
+        >
+          {games.map((g, i) => (
+            <BoardCard key={g.game_id} game={g} index={i} />
           ))}
         </div>
       )}
@@ -215,18 +169,81 @@ export default function LiveBoards({ events }: LiveBoardsProps) {
   );
 }
 
-// ── Internal sub-components ────────────────────────────────────────────────
+// ── Panel-head + empty-plot, shared utilities ─────────────────────────────
+
+export function PanelHead({
+  eyebrow,
+  title,
+  meta,
+}: {
+  /** Optional small-caps label above the title. Omit for a tighter head. */
+  eyebrow?: string;
+  title: string;
+  meta?: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          {eyebrow ? <span className="eyebrow">{eyebrow}</span> : null}
+          <h2 className={`panel-title ${eyebrow ? "mt-1.5" : ""}`}>{title}</h2>
+        </div>
+        {meta ? (
+          <span
+            className="text-[11px] tracking-woodland uppercase"
+            style={{ color: "var(--ink-faint)" }}
+          >
+            {meta}
+          </span>
+        ) : null}
+      </div>
+      <div className="ornament mt-3" />
+    </div>
+  );
+}
+
+export function EmptyPlot({
+  message,
+  hint,
+}: {
+  message: string;
+  hint?: string;
+}) {
+  return (
+    <div
+      className="mt-6 flex flex-col items-center justify-center gap-2 rounded-md py-12 text-center"
+      style={{
+        border: "1px dashed var(--line-strong)",
+        background:
+          "radial-gradient(380px 160px at 50% 0%, rgba(63,87,57,0.18), transparent 70%)",
+      }}
+    >
+      <span
+        className="font-display italic"
+        style={{ fontSize: 19, color: "var(--bronze-300)" }}
+      >
+        {message}
+      </span>
+      {hint ? (
+        <span
+          className="text-[12.5px]"
+          style={{ color: "var(--ink-faint)" }}
+        >
+          {hint}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Board card ────────────────────────────────────────────────────────────
 
 interface BoardCardProps {
   game: GameState;
+  index: number;
 }
 
-function BoardCard({ game }: BoardCardProps) {
-  // Standard PGN pair-rendering: "1. e4 e5" on one line, then "2. Nf3
-  // Nc6" on the next. White moves sit at even indices, black at odd.
-  // If the game ended on a half-move (white played but black didn't
-  // respond yet), the trailing pair shows just "N. <white>" alone.
-  // Reversed so the most recent pair is on top.
+function BoardCard({ game, index }: BoardCardProps) {
   const movePairs: { fullMove: number; text: string }[] = [];
   for (let i = 0; i < game.san_history.length; i += 2) {
     const fullMove = Math.floor(i / 2) + 1;
@@ -239,10 +256,6 @@ function BoardCard({ game }: BoardCardProps) {
   }
   movePairs.reverse();
 
-  // Bold the verdict for the outcomes operators care about most when
-  // judging a candidate engine: hallucinated/illegal moves, real
-  // checkmates, and draws (stalemate / max-moves / threefold). Other
-  // terminations (time, error) get plain styling.
   const isHallucination = game.termination === "illegal_move";
   const isCheckmate = game.termination === "checkmate";
   const isDraw =
@@ -252,101 +265,199 @@ function BoardCard({ game }: BoardCardProps) {
     game.termination === "draw";
   const drawLabel =
     game.termination === "stalemate"
-      ? "Draw — stalemate"
+      ? "drawn — stalemate"
       : game.termination === "max_moves"
-        ? "Draw — move limit"
-        : "Draw";
+        ? "drawn — move limit"
+        : "drawn";
   const verdictLabel = isHallucination
-    ? "Hallucination"
+    ? "hallucination"
     : isCheckmate
-      ? "Checkmate"
+      ? "checkmate"
       : isDraw
         ? drawLabel
         : game.termination
           ? game.termination.replace(/_/g, " ")
           : null;
 
+  const verdictColor = isHallucination
+    ? "var(--ember-500)"
+    : isCheckmate
+      ? "var(--bronze-400)"
+      : isDraw
+        ? "var(--moss-400)"
+        : "var(--ink-muted)";
+
+  // "live" cards drift very softly to break the static-grid feeling.
+  const animStyle = !game.finished
+    ? { animation: `drift 6.${(index % 5) + 1}s ease-in-out infinite` }
+    : {};
+
   return (
     <div
-      className={`bg-gray-900 rounded p-2 flex flex-col text-xs ${
-        game.finished ? "opacity-70" : ""
+      className={`relative rounded-lg p-3 transition-opacity ${
+        game.finished ? "opacity-80" : ""
       }`}
-      style={{ width: 360 }}
+      style={{
+        background:
+          "linear-gradient(180deg, rgba(34,41,35,0.85), rgba(22,27,24,0.92))",
+        border: "1px solid var(--line)",
+        boxShadow:
+          "inset 0 1px 0 rgba(232,226,211,0.04), 0 12px 26px -22px rgba(0,0,0,0.7)",
+        ...animStyle,
+      }}
     >
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-gray-400 font-mono">#{game.game_id}</span>
-        <span className="text-gray-500 font-mono">ply {game.ply}</span>
+      {/* Card header — a small placard with game id and ply */}
+      <div className="mb-2 flex items-center justify-between">
+        <span
+          className="font-mono-tab text-[10.5px] tracking-woodland uppercase"
+          style={{ color: "var(--ink-faint)" }}
+        >
+          board · {String(game.game_id).padStart(2, "0")}
+        </span>
+        <span
+          className="font-mono-tab text-[10.5px]"
+          style={{ color: "var(--ink-faint)" }}
+        >
+          ply {game.ply}
+        </span>
       </div>
 
-      {/* Two-column body: board + player labels on the left, scrollable
-          move log on the right. The right column flexes to fill the
-          remaining card width. The result chip lives at the top of the
-          right column so it sits directly above the most recent move. */}
-      <div className="flex gap-2">
-        <div className="flex flex-col shrink-0" style={{ width: 170 }}>
-          <div className="flex items-center gap-1 truncate">
-            <span className="inline-block w-2 h-2 rounded-sm bg-gray-900 border border-gray-500 shrink-0" />
-            <span
-              className="text-gray-300 font-mono truncate"
-              title={game.black}
-            >
-              {game.black}
-            </span>
-          </div>
-
-          <div className="my-1">
+      {/* Two-column body: warm wooden board + scoresheet */}
+      <div className="flex gap-3">
+        <div className="flex shrink-0 flex-col" style={{ width: 168 }}>
+          <PlayerLine
+            color="black"
+            name={game.black}
+            highlighted={
+              game.finished && game.result === "0-1"
+            }
+          />
+          <div
+            className="my-1.5 overflow-hidden rounded"
+            style={{
+              boxShadow:
+                "0 0 0 1px rgba(0,0,0,0.45), 0 6px 18px -10px rgba(0,0,0,0.6), inset 0 0 0 2px rgba(122,90,55,0.55)",
+            }}
+          >
             <Chessboard
               position={game.fen === "start" ? "start" : game.fen}
               arePiecesDraggable={false}
-              customDarkSquareStyle={{ backgroundColor: "#374151" }}
-              customLightSquareStyle={{ backgroundColor: "#9ca3af" }}
-              boardWidth={170}
+              customDarkSquareStyle={{
+                backgroundColor: "var(--board-dark)",
+              }}
+              customLightSquareStyle={{
+                backgroundColor: "var(--board-light)",
+              }}
+              boardWidth={168}
             />
           </div>
-
-          <div className="flex items-center gap-1 truncate">
-            <span className="inline-block w-2 h-2 rounded-sm bg-gray-100 border border-gray-500 shrink-0" />
-            <span
-              className="text-gray-300 font-mono truncate"
-              title={game.white}
-            >
-              {game.white}
-            </span>
-          </div>
+          <PlayerLine
+            color="white"
+            name={game.white}
+            highlighted={
+              game.finished && game.result === "1-0"
+            }
+          />
         </div>
 
-        <div className="flex-1 min-w-0 overflow-y-auto text-[10px] leading-tight text-gray-400 font-mono max-h-[200px]">
+        <div className="flex min-w-0 flex-1 flex-col text-[10.5px]">
           {game.finished && (
-            <div className="mb-0.5 flex items-baseline gap-2">
+            <div className="mb-1.5 flex items-baseline gap-2">
               {verdictLabel && (
                 <span
-                  className={`font-mono ${
-                    isHallucination
-                      ? "font-bold text-red-400"
-                      : isCheckmate
-                        ? "font-bold text-yellow-300"
-                        : isDraw
-                          ? "font-bold text-sky-300"
-                          : "text-gray-400"
-                  }`}
+                  className="font-display italic leading-none"
+                  style={{ fontSize: 12.5, color: verdictColor }}
                 >
                   {verdictLabel}
                 </span>
               )}
-              <span className="text-yellow-400 font-mono">{game.result}</span>
+              <span
+                className="font-mono-tab"
+                style={{ color: "var(--bronze-300)" }}
+              >
+                {game.result}
+              </span>
             </div>
           )}
-          {movePairs.length === 0 ? (
-            <span className="italic text-gray-600">no moves yet</span>
-          ) : (
-            movePairs.map(({ fullMove, text }) => (
-              <div key={fullMove} className="truncate" title={text}>
-                {text}
-              </div>
-            ))
+
+          <div
+            className="font-mono-tab leading-tight"
+            style={{
+              color: "var(--ink-soft)",
+              maxHeight: 196,
+              overflowY: "auto",
+            }}
+          >
+            {movePairs.length === 0 ? (
+              <span
+                className="italic"
+                style={{ color: "var(--ink-faint)" }}
+              >
+                no moves yet
+              </span>
+            ) : (
+              movePairs.map(({ fullMove, text }) => (
+                <div
+                  key={fullMove}
+                  className="truncate"
+                  title={text}
+                  style={{ color: "var(--ink-soft)" }}
+                >
+                  {text}
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Latest move, verbose — anchored to the bottom of the card */}
+          {game.san_history.length > 0 && !game.finished && (
+            <div
+              className="mt-2 border-t pt-2 text-[10.5px] italic"
+              style={{
+                borderColor: "var(--line)",
+                color: "var(--ink-faint)",
+              }}
+            >
+              {verboseMove(
+                game.san_history[game.san_history.length - 1],
+                game.san_history.length % 2 === 1 ? "white" : "black",
+              )}
+            </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function PlayerLine({
+  color,
+  name,
+  highlighted,
+}: {
+  color: "white" | "black";
+  name: string;
+  highlighted: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <span
+        aria-hidden
+        className="inline-block h-2.5 w-2.5 rounded-full"
+        style={{
+          background: color === "white" ? "var(--bronze-200)" : "#0d100d",
+          border: "1px solid rgba(232,226,211,0.25)",
+        }}
+      />
+      <span
+        className="font-mono-tab truncate text-[11px]"
+        style={{
+          color: highlighted ? "var(--bronze-300)" : "var(--ink-soft)",
+        }}
+        title={name}
+      >
+        {name}
+      </span>
     </div>
   );
 }

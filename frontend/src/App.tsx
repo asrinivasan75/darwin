@@ -5,14 +5,6 @@
  * out to all five dashboard components. No per-component state management is
  * needed — each component filters the flat event array client-side.
  *
- * Layout (Tailwind grid):
- *   Row 1 (3 columns): LiveBoard | StrategistFeed | EloChart
- *   Row 2 (2 columns): Bracket   | GenerationTimeline
- *
- * The "Run Generation" button in the header fires `POST /api/generations/run`
- * which triggers the backend orchestration loop. The button is fire-and-forget;
- * progress is reflected through the WebSocket event stream.
- *
  * @module App
  */
 
@@ -25,28 +17,9 @@ import StrategistFeed from "./components/StrategistFeed";
 import Bracket from "./components/Bracket";
 import GenerationTimeline from "./components/GenerationTimeline";
 
-/**
- * App — root component that assembles the full Darwin dashboard.
- *
- * Uses {@link useEventStream} to obtain the live (or mock) event log, then
- * passes it to every panel. Switching from mock to live requires only removing
- * `?mock` from the URL — no code changes needed.
- *
- * @returns the full page layout with header and all five dashboard panels
- */
 export default function App() {
-  // Single source of truth for all WebSocket events — shared read-only across
-  // every panel so each can derive its own view without extra state management.
   const events = useEventStream();
 
-  // Walk events once to derive everything the header needs:
-  //   - isRunning: a generation is in flight
-  //   - currentGen: the highest generation.started.number we've seen
-  //   - currentChampion: the most recent champion (from generation.finished
-  //     if present, else from generation.started.champion of the latest
-  //     generation, else null when the dashboard is fresh)
-  //   - finishedCount: number of distinct generations that have finished
-  //     promoted or not — used to label the run button "Next" vs "Run"
   const { isRunning, currentGen, currentChampion, finishedCount } = (() => {
     let running = false;
     let gen: number | null = null;
@@ -56,11 +29,6 @@ export default function App() {
       if (e.type === "generation.started") {
         running = true;
         gen = e.number;
-        // Don't overwrite champion with the *starting* champion if the
-        // previous generation already finished and named a new winner.
-        // The starting champion is the same as last finished's
-        // new_champion in the lineage flow, so this is just a fallback
-        // for the very first generation.
         if (champion === null) champion = e.champion;
       } else if (e.type === "generation.finished") {
         running = false;
@@ -79,50 +47,31 @@ export default function App() {
     };
   })();
 
-  /** Cancel any running generation and start a new one. */
   function runGeneration() {
-    fetch("/api/generations/run", { method: "POST" }).catch(() => {
-      // Backend may not be running in offline/mock development — ignore silently
-    });
+    fetch("/api/generations/run", { method: "POST" }).catch(() => {});
   }
 
-  /** Cancel the running generation, leaving the dashboard idle. */
   function stopGeneration() {
-    fetch("/api/generations/stop", { method: "POST" }).catch(() => {
-      // Same offline-tolerance as runGeneration
-    });
+    fetch("/api/generations/stop", { method: "POST" }).catch(() => {});
   }
 
-  // Stronger than Stop: also wipes engines/games/strategist questions on
-  // the server and broadcasts ``state.cleared`` so every connected
-  // dashboard zeroes its event log. We confirm because this is destructive
-  // — once cleared, history can't be recovered without replaying the
-  // generations from scratch.
   function clearAll() {
     if (
       !window.confirm(
-        "Clear all engines, games, and strategist history? This cannot be undone."
+        "Clear all engines, games, and strategist history? This cannot be undone.",
       )
     ) {
       return;
     }
-    fetch("/api/state/clear", { method: "POST" }).catch(() => {
-      // Backend may be offline (mock dev mode) — frontend won't see a
-      // state.cleared event, but there's nothing to clear in that case.
-    });
+    fetch("/api/state/clear", { method: "POST" }).catch(() => {});
   }
 
-  // Cancel the in-flight generation when the user closes/reloads the tab.
-  // sendBeacon is the only network call the browser guarantees to flush
-  // during pagehide — fetch() can race the document teardown and get
-  // dropped, leaving a generation churning the LLM with nobody watching.
   useEffect(() => {
     const onPageHide = () => {
       try {
         navigator.sendBeacon("/api/generations/stop");
       } catch {
-        // sendBeacon throws on some browsers if the URL is rejected.
-        // Best-effort only — there's nothing useful we can do here.
+        /* sendBeacon throws on some browsers — best-effort only. */
       }
     };
     window.addEventListener("pagehide", onPageHide);
@@ -130,104 +79,258 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen p-6">
-      {/* ── Header ───────────────────────────────────────────────────────── */}
-      <header className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-widest text-gray-100">
-            DARWIN
-          </h1>
-          <p className="text-xs text-gray-500 mt-0.5">
-            A self-improving chess engine. Agentic tournament selection, one generation at a time.
-          </p>
-        </div>
+    <div className="relative min-h-screen overflow-x-hidden">
+      {/* Top hairline — a single warm thread suggesting "this room has a
+          ceiling." Pure decoration. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-x-0 top-0 h-px"
+        style={{
+          background:
+            "linear-gradient(90deg, transparent, rgba(201,168,118,0.35) 30%, rgba(201,168,118,0.35) 70%, transparent)",
+        }}
+      />
 
-        <div className="flex items-center gap-3">
-          {/* Generation tracker — current gen number + reigning champion.
-              Pulses while a generation is running so a glance tells you
-              whether to expect more events or whether the dashboard is
-              parked between rounds. */}
-          <div
-            className={`px-3 py-2 rounded text-xs font-mono ${
-              isRunning
-                ? "bg-blue-900/40 text-blue-200 animate-pulse"
-                : "bg-gray-800 text-gray-300"
-            }`}
-            title={
-              currentChampion
-                ? `Champion: ${currentChampion}`
-                : "No generations yet"
-            }
-          >
-            {currentGen !== null ? (
-              <>
-                <span className="text-gray-400">Gen </span>
-                <span className="font-bold">{currentGen}</span>
-                {currentChampion && (
-                  <>
-                    <span className="text-gray-500"> · </span>
-                    <span className="text-gray-200">{currentChampion}</span>
-                  </>
-                )}
-                {isRunning && (
-                  <span className="ml-2 text-blue-300">●</span>
-                )}
-              </>
-            ) : (
-              <span className="text-gray-500">no generations yet</span>
-            )}
-          </div>
+      <div className="relative mx-auto w-full max-w-[1480px] px-8 pb-20 pt-10">
+        <Header
+          isRunning={isRunning}
+          currentGen={currentGen}
+          currentChampion={currentChampion}
+          finishedCount={finishedCount}
+          eventCount={events.length}
+          onRun={runGeneration}
+          onStop={stopGeneration}
+          onClear={clearAll}
+        />
 
-          <button
-            onClick={stopGeneration}
-            disabled={!isRunning}
-            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 active:bg-gray-800 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed text-white text-sm font-semibold rounded transition-colors"
-          >
-            ■ Stop
-          </button>
+        {/* Row 1 — live boards (what is it doing right now?) */}
+        <section className="rise" style={{ animationDelay: "240ms" }}>
+          <LiveBoards events={events} />
+        </section>
 
-          <button
-            onClick={clearAll}
-            disabled={events.length === 0 && !isRunning}
-            className="px-3 py-2 bg-red-700 hover:bg-red-600 active:bg-red-800 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed text-white text-sm font-semibold rounded transition-colors"
-          >
-            Clear
-          </button>
+        {/* Row 2 — this generation: cause (strategist) + effect (bracket) */}
+        <section
+          className="mt-6 grid grid-cols-1 gap-6 rise lg:grid-cols-2"
+          style={{ animationDelay: "360ms" }}
+        >
+          <StrategistFeed events={events} />
+          <Bracket events={events} />
+        </section>
 
-          <button
-            onClick={runGeneration}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-semibold rounded transition-colors"
-          >
-            {isRunning
-              ? "Restart Generation"
-              : finishedCount > 0
-              ? "Next Generation"
-              : "Run Generation"}
-          </button>
-        </div>
-      </header>
+        {/* Row 3 — across generations: champion line + every engine */}
+        <section
+          className="mt-6 grid grid-cols-1 gap-6 rise lg:grid-cols-2"
+          style={{ animationDelay: "480ms" }}
+        >
+          <EloChart events={events} />
+          <EnginesEloChart events={events} />
+        </section>
 
-      {/* ── Row 1: Live boards (full width) ──────────────────────────────── */}
-      <div className="mb-6">
-        <LiveBoards events={events} />
-      </div>
+        {/* Row 4 — full history list */}
+        <section
+          className="mt-6 rise"
+          style={{ animationDelay: "600ms" }}
+        >
+          <GenerationTimeline events={events} />
+        </section>
 
-      {/* ── Row 2: Strategist feed + Champion Elo (headline) ─────────────── */}
-      <div className="grid grid-cols-2 gap-6 mb-6">
-        <StrategistFeed events={events} />
-        <EloChart events={events} />
-      </div>
-
-      {/* ── Row 3: All-engines Elo (per-cohort detail view) ──────────────── */}
-      <div className="mb-6">
-        <EnginesEloChart events={events} />
-      </div>
-
-      {/* ── Row 4: Tournament bracket + Generation history ────────────────── */}
-      <div className="grid grid-cols-2 gap-6">
-        <Bracket events={events} />
-        <GenerationTimeline events={events} />
+        <Footer />
       </div>
     </div>
+  );
+}
+
+// ── Header ─────────────────────────────────────────────────────────────────
+
+interface HeaderProps {
+  isRunning: boolean;
+  currentGen: number | null;
+  currentChampion: string | null;
+  finishedCount: number;
+  eventCount: number;
+  onRun: () => void;
+  onStop: () => void;
+  onClear: () => void;
+}
+
+function Header(props: HeaderProps) {
+  const {
+    isRunning,
+    currentGen,
+    currentChampion,
+    finishedCount,
+    eventCount,
+    onRun,
+    onStop,
+    onClear,
+  } = props;
+
+  return (
+    <header
+      className="rise mb-10 flex flex-col gap-8 lg:mb-12 lg:flex-row lg:items-end lg:justify-between"
+      style={{ animationDelay: "60ms" }}
+    >
+      <div className="relative">
+        {currentGen !== null ? (
+          <div className="eyebrow mb-3">
+            <span>GENERATION {currentGen}</span>
+          </div>
+        ) : null}
+
+        <h1
+          className="font-display leading-[0.92]"
+          style={{
+            fontSize: "clamp(56px, 8.4vw, 124px)",
+            color: "var(--ink)",
+            fontVariationSettings:
+              '"opsz" 144, "SOFT" 100, "wght" 360',
+            letterSpacing: "-0.025em",
+          }}
+        >
+          darwin
+        </h1>
+
+        <p
+          className="mt-4 max-w-xl text-[14.5px] leading-relaxed"
+          style={{ color: "var(--ink-soft)" }}
+        >
+          An evolutionary loop for chess engines.
+          <span style={{ color: "var(--ink-faint)" }}>
+            {" "}
+            The LLM proposes, two more build, the board decides who survives.
+          </span>
+        </p>
+      </div>
+
+      <div className="flex flex-col items-stretch gap-4 lg:items-end">
+        <ChampionBadge
+          currentGen={currentGen}
+          currentChampion={currentChampion}
+          isRunning={isRunning}
+        />
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            onClick={onStop}
+            disabled={!isRunning}
+            className="btn btn-ghost"
+            title="Cancel the running generation"
+          >
+            ◼ stop
+          </button>
+          <button
+            onClick={onClear}
+            disabled={eventCount === 0 && !isRunning}
+            className="btn btn-danger"
+            title="Wipe local + server state"
+          >
+            clear
+          </button>
+          <button onClick={onRun} className="btn btn-primary">
+            {isRunning
+              ? "restart generation"
+              : finishedCount > 0
+                ? "next generation"
+                : "run generation"}
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+interface ChampionBadgeProps {
+  currentGen: number | null;
+  currentChampion: string | null;
+  isRunning: boolean;
+}
+
+/**
+ * Headline lockup for the reigning champion.
+ *
+ * Reads as a small museum placard: a label, a numeric generation in
+ * Fraunces, and the champion's engine-name in a typewriter-mono so the
+ * hash suffixes don't fight the display face. A firefly pulse under the
+ * label tells you whether the dashboard is mid-generation.
+ */
+function ChampionBadge({
+  currentGen,
+  currentChampion,
+  isRunning,
+}: ChampionBadgeProps) {
+  return (
+    <div
+      className="panel relative overflow-hidden px-5 py-3.5"
+      style={{ minWidth: 320 }}
+      title={currentChampion ?? "no generation yet"}
+    >
+      <div className="relative z-10 flex items-center gap-4">
+        <div className="flex flex-col">
+          <span className="eyebrow" style={{ marginBottom: 2 }}>
+            {isRunning ? "running" : "champion"}
+          </span>
+          <div className="flex items-baseline gap-2">
+            <span
+              className="font-display-tight leading-none"
+              style={{ fontSize: 28, color: "var(--ink)" }}
+            >
+              {currentGen ?? "—"}
+            </span>
+            <span
+              className="text-[10px] uppercase tracking-woodland"
+              style={{ color: "var(--ink-faint)" }}
+            >
+              gen
+            </span>
+          </div>
+        </div>
+
+        <div
+          className="h-9 w-px"
+          style={{ background: "var(--line-strong)" }}
+        />
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span
+            className="font-mono-tab truncate text-[12.5px]"
+            style={{ color: "var(--bronze-300)" }}
+          >
+            {currentChampion ?? "no champion"}
+          </span>
+          <span
+            className="mt-0.5 flex items-center gap-1.5 text-[10px]"
+            style={{ color: "var(--ink-faint)" }}
+          >
+            {isRunning ? (
+              <>
+                <span className="firefly" />
+                <span className="uppercase tracking-woodland">running</span>
+              </>
+            ) : (
+              <span className="uppercase tracking-woodland">idle</span>
+            )}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Footer ─────────────────────────────────────────────────────────────────
+
+function Footer() {
+  return (
+    <footer
+      className="mt-16 flex items-center justify-between border-t pt-5 text-[10.5px] tracking-woodland uppercase"
+      style={{
+        borderColor: "var(--line)",
+        color: "var(--ink-faint)",
+      }}
+    >
+      <span>Built at the Point72 Hackathon</span>
+      <span className="font-mono-tab normal-case tracking-normal">
+        ws · /api · sqlite
+      </span>
+    </footer>
   );
 }

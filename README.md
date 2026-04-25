@@ -8,7 +8,7 @@ A self-improving chess engine that evolves its own scaffolding via agentic tourn
 
 ## Overview
 
-Darwin asks an LLM to write a chess engine, then asks another LLM how to make it better, then asks two more LLMs to act on those suggestions, then plays the resulting candidates in a round-robin to decide who survives. Each pass through that pipeline is a **generation**. The next generation starts from the previous generation's winner.
+Darwin asks an LLM to write a chess engine, then asks another LLM how to make it better, then asks four more LLMs (one per improvement category) to act on those suggestions, then plays the resulting candidates in a round-robin to decide who survives. Each pass through that pipeline is a **generation**. The next generation starts from the previous generation's winner.
 
 Each generation runs four roles:
 
@@ -17,7 +17,7 @@ Each generation runs four roles:
 3. **Validator** — static-source gates (forbidden imports, hallucinated `chess.X` attributes, missing `select_move`, etc.) plus a smoke game vs a `RandomEngine`. Anything that crashes, times out, or returns illegal moves never reaches the tournament.
 4. **Tournament** — a round-robin of the surviving candidates plus the previous champion and its runner-up. Pairings play two games (one per color). Tournament scores decide who advances; Elo is tracked for the dashboard but does not gate selection.
 
-The promotion rule is intentionally strict: the top scorer becomes the new champion **only if** it also beats the prior champion head-to-head. This stops a candidate that lucks out against weaker peers from displacing a champion it cannot actually beat.
+The promotion rule is tournament-wide **win rate** (score / games_played) with random tiebreak. An earlier version required the top scorer to also beat the prior champion head-to-head, but with only two games per pair that gate's variance was high enough to lock the demo on baseline; cohort-wide win rate is a more stable signal.
 
 The dashboard streams every move, every strategist question, every bracket result, and every Elo update over a WebSocket so you can watch a generation unfold in real time.
 
@@ -133,12 +133,12 @@ What we built beyond the original 24-hour scope:
 
 - **Two LLM providers behind one interface** — strategist/builder/player agents all go through `darwin.llm.complete*`, which dispatches to Anthropic or Google based on `LLM_PROVIDER`. Function-calling shape is identical on both sides.
 - **Top-2 lineage** — the runner-up from each generation is carried into the next round-robin alongside the new champion. Stops the population from collapsing onto a single line of descent.
-- **Hard promotion gate** — the top scorer only takes the throne if it *also* beats the prior champion head-to-head. Prevents lucky-pairing displacements.
+- **Win-rate selection** — promotion is by tournament-wide win rate (score / games_played) with random tiebreak. We started with a head-to-head gate against the prior champion, but with only 2 games per pair its variance could lock the demo on baseline indefinitely.
 - **Static + dynamic candidate gating** — forbidden imports, hallucinated `chess.X` attributes, missing required structure, and a smoke game vs `RandomEngine` all run before a candidate enters the tournament. Most builder failures are caught in <1 s instead of corrupting a 5-minute round-robin.
 - **Optional Modal tournament backend** — flip `TOURNAMENT_BACKEND=modal` in `.env` and each game runs in its own Modal container. Real OS-level parallelism and frees the local machine; warmup runs in parallel with strategist + builders so it's a net win on wall-clock.
 - **Live dashboard** — every move, strategist question, and Elo update streams over WebSocket. `state.cleared` events let one client wipe everyone's view in lockstep.
 - **Replay command** — `make replay` re-emits the persisted event stream over WS. Designed as a demo safety net for when the live run misbehaves.
-- **Pure-code engine experiment** — the [`experiment-pure-code-engines`](./EXPERIMENT_PURE_CODE.md) branch flips the design so the LLM *writes* a classical alpha-beta engine that plays in pure Python (no LLM at move time). ~50 ms per move instead of seconds, ~5 LLM calls per gen instead of ~1000.
+- **Pure-code engine experiment** — the [`experiment-pure-code-engines`](./docs/experiment-pure-code.md) branch flips the design so the LLM *writes* a classical alpha-beta engine that plays in pure Python (no LLM at move time). ~50 ms per move instead of seconds, ~5 LLM calls per gen instead of ~1000.
 
 ---
 

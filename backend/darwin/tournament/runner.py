@@ -260,7 +260,29 @@ async def round_robin(
 
     backend = settings.tournament_backend
     if backend == "modal":
-        results = await _round_robin_modal(pairings, time_per_move_ms, on_event)
+        # Auto-fallback: if Modal dispatch raises for any reason (auth
+        # expired, function not deployed, network outage, quota), log
+        # a warning and re-run the same pairings on the local asyncio
+        # path. Slower but the demo still completes. To make local
+        # permanent, set TOURNAMENT_BACKEND=local in .env. Only a
+        # Modal-side failure triggers fallback — if the local path
+        # then also raises, that propagates to run_generation_task
+        # which surfaces a "generation crashed" event.
+        try:
+            results = await _round_robin_modal(
+                pairings, time_per_move_ms, on_event
+            )
+        except Exception as e:
+            log.warning(
+                "modal-tournament dispatch failed (%s: %s) — falling "
+                "back to local asyncio path. Set TOURNAMENT_BACKEND=local "
+                "in .env to make local the default.",
+                type(e).__name__,
+                str(e)[:200],
+            )
+            results = await _round_robin_local(
+                pairings, time_per_move_ms, on_event
+            )
     elif backend == "local":
         results = await _round_robin_local(pairings, time_per_move_ms, on_event)
     else:
