@@ -59,6 +59,10 @@ async def run_generation(champion: Engine, generation_number: int) -> Engine:
     candidates: list[Engine] = []
     for q, p in zip(questions, paths):
         if isinstance(p, Exception):
+            log.error(
+                "build_engine raised q=%d category=%s err=%r",
+                q.index, q.category, p,
+            )
             await bus.emit(
                 {
                     "type": "builder.completed",
@@ -71,6 +75,13 @@ async def run_generation(champion: Engine, generation_number: int) -> Engine:
             continue
         ok, err = await validate_engine(p)
         name = p.stem
+        if not ok:
+            log.error(
+                "validator rejected q=%d category=%s engine=%s reason=%r",
+                q.index, q.category, name, err,
+            )
+        else:
+            log.info("validator accepted q=%d category=%s engine=%s", q.index, q.category, name)
         await bus.emit(
             {
                 "type": "builder.completed",
@@ -82,6 +93,17 @@ async def run_generation(champion: Engine, generation_number: int) -> Engine:
         )
         if ok:
             candidates.append(load_engine(str(p)))
+
+    # If every candidate fell through, ``round_robin([champion])`` will
+    # schedule zero games (i==j filter). Surface this loudly so the
+    # operator knows why the dashboard goes silent after builder events.
+    if not candidates:
+        log.error(
+            "generation %d has 0 candidates — every builder failed or "
+            "was rejected by the validator. Tournament will schedule 0 games. "
+            "Check engines/generated/_failures/ for raw model responses.",
+            generation_number,
+        )
 
     standings = await round_robin(
         [champion, *candidates],

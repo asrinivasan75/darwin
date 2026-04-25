@@ -11,13 +11,25 @@ from types import SimpleNamespace
 
 import pytest
 
-from cubist.agents.builder import FORBIDDEN, build_engine, validate_engine
+from cubist.agents.builder import (
+    FORBIDDEN,
+    REJECT_TERMINATIONS,
+    REQUIRED_PATTERNS,
+    build_engine,
+    validate_engine,
+)
 from cubist.agents.strategist import Question
 
+# A minimal "good" engine source: subclasses BaseLLMEngine, has the
+# required `engine = …` symbol, has the async select_move signature, and
+# attempts a real LLM call (with the standard try/except → first-legal
+# fallback so a CI run without an API key still produces a legal move).
 LEGAL_ENGINE_SOURCE = """\
 import chess
 
 from cubist.engines.base import BaseLLMEngine
+from cubist.llm import complete_text
+from cubist.config import settings
 
 
 class CandidateEngine(BaseLLMEngine):
@@ -25,7 +37,16 @@ class CandidateEngine(BaseLLMEngine):
         super().__init__(name=\"PLACEHOLDER\", generation=1, lineage=[\"baseline-v0\"])
 
     async def select_move(self, board, time_remaining_ms):
-        return next(iter(board.legal_moves))
+        try:
+            text = await complete_text(
+                settings.player_model,
+                "You are a chess engine.",
+                f"FEN: {board.fen()}\\nYour move:",
+                max_tokens=10,
+            )
+            return board.parse_san(text.strip().split()[0])
+        except Exception:
+            return next(iter(board.legal_moves))
 
 
 engine = CandidateEngine()
@@ -143,15 +164,105 @@ def test_forbidden_regex_allows_legitimate_imports():
 
 @pytest.mark.asyncio
 async def test_validate_engine_handles_unimportable_module(tmp_path):
-    """When registry/referee can't load a module, validator returns (False, reason).
-    This also doubles as a smoke test that the lazy imports don't break the
-    function before the registry/referee stubs are filled in."""
+    """Garbage input is rejected at static-source phase OR at module load.
+
+    The new validator runs static gates BEFORE attempting to load the file,
+    so syntactically-broken garbage usually fails at "static:" first
+    (no engine symbol, no async select_move, no LLM call). Either reason
+    is acceptable — both prevent a bad candidate from reaching the
+    tournament.
+    """
     bad = tmp_path / "nope.py"
     bad.write_text("this is not valid python !!!")
 
     ok, reason = await validate_engine(bad)
     assert ok is False
-    # We accept either an "import" error or a "load" error — depends on
-    # whether registry.load_engine has been implemented yet.
     assert reason is not None
-    assert any(tag in reason for tag in ("load:", "import:"))
+    assert any(tag in reason for tag in ("static:", "load:", "import:"))
+
+
+# ---------------------------------------------------------------------------
+# New required-pattern gates added in the games-not-running fix.
+# Each test asserts build_engine raises ValueError with a useful reason.
+# ---------------------------------------------------------------------------
+
+
+def _drop_pattern(source: str, pattern_name: str) -> str:
+    """Strip the line(s) needed to satisfy ``pattern_name`` from ``source``."""
+    if pattern_name == "engine_symbol":
+        return source.replace("engine = CandidateEngine()", "# engine line removed")
+    if pattern_name == "async_select_move":
+        return source.replace("async def select_move", "def select_move")
+    if pattern_name == "llm_call":
+        # Remove the LLM call line + the import; leave the fallback.
+        out = source.replace("from cubist.llm import complete_text\n", "")
+        out = out.replace(
+            "        try:\n"
+            '            text = await complete_text(\n'
+            "                settings.player_model,\n"
+            '                "You are a chess engine.",\n'
+            '                f"FEN: {board.fen()}\\nYour move:",\n'
+            "                max_tokens=10,\n"
+            "            )\n"
+            "            return board.parse_san(text.strip().split()[0])\n"
+            "        except Exception:\n"
+            "            return next(iter(board.legal_moves))\n",
+            "        return next(iter(board.legal_moves))\n",
+        )
+        return out
+    raise ValueError(f"unknown pattern_name {pattern_name!r}")
+
+
+@pytest.mark.parametrize("pattern_name", [p[0] for p in REQUIRED_PATTERNS])
+@pytest.mark.asyncio
+async def test_build_engine_rejects_missing_required_pattern(
+    tmp_path, monkeypatch, question, pattern_name
+):
+    """When the model omits engine= / async select_move / LLM call, build raises."""
+    monkeypatch.setattr("cubist.agents.builder.GENERATED_DIR", tmp_path / "generated")
+    monkeypatch.setattr("cubist.agents.builder.FAILED_DIR", tmp_path / "failures")
+    bad_source = _drop_pattern(LEGAL_ENGINE_SOURCE, pattern_name)
+
+    async def fake_complete(**kwargs):
+        return [_fake_tool_use_block(bad_source)]
+
+    monkeypatch.setattr("cubist.agents.builder.complete", fake_complete)
+
+    with pytest.raises(ValueError, match=pattern_name):
+        await build_engine(
+            champion_code="x = 1",
+            champion_name="baseline-v0",
+            generation=1,
+            question=question,
+        )
+
+    # The rejected response should be persisted for post-mortem.
+    failures = list((tmp_path / "failures").glob("*.txt"))
+    assert failures, "rejected response was not saved to FAILED_DIR"
+
+
+@pytest.mark.asyncio
+async def test_validate_engine_runs_static_gates_on_existing_file(tmp_path):
+    """A hand-edited file that bypasses build_engine still hits the static gate."""
+    # Looks like Python, but no engine symbol, no async, no LLM call.
+    bad = tmp_path / "bad_engine.py"
+    bad.write_text(
+        "import chess\n"
+        "from cubist.engines.base import BaseLLMEngine\n"
+        "class C(BaseLLMEngine):\n"
+        "    def select_move(self, board, time_remaining_ms):\n"
+        "        return next(iter(board.legal_moves))\n"
+        "# no engine = ...\n"
+    )
+    ok, reason = await validate_engine(bad)
+    assert ok is False
+    assert reason is not None
+    # The static phase fires before module load and reports the missing pattern.
+    assert reason.startswith("static:")
+
+
+def test_reject_terminations_constant_includes_new_modes():
+    """The new validator catches illegal_move and time, not just error."""
+    assert "error" in REJECT_TERMINATIONS
+    assert "illegal_move" in REJECT_TERMINATIONS
+    assert "time" in REJECT_TERMINATIONS
