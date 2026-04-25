@@ -7,6 +7,7 @@ dependencies = [
   "chess>=1.11.0",
   "anthropic>=0.40.0",
   "google-genai>=1.0.0",
+  "openai>=1.50.0",
   "fastapi>=0.110.0",
   "uvicorn[standard]>=0.27.0",
   "sqlmodel>=0.0.16",

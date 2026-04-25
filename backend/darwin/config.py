@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Provider name alias — used by per-role overrides + complete() dispatch.
-Provider = Literal["claude", "gemini"]
+Provider = Literal["claude", "gemini", "openai"]
 
 
 class Settings(BaseSettings):
@@ -11,9 +11,10 @@ class Settings(BaseSettings):
 
     # Default LLM provider — selects which SDK handles a complete() call
     # when no per-role override is set. "claude" uses Anthropic
-    # (ANTHROPIC_API_KEY); "gemini" uses Google GenAI (GOOGLE_API_KEY).
-    # Switching providers does NOT rewrite model IDs below — set them to
-    # provider-appropriate values in .env.
+    # (ANTHROPIC_API_KEY); "gemini" uses Google GenAI (GOOGLE_API_KEY);
+    # "openai" uses OpenAI (OPENAI_API_KEY). Switching providers does
+    # NOT rewrite model IDs below — set them to provider-appropriate
+    # values in .env.
     llm_provider: Provider = "claude"
 
     # Per-role provider overrides. When unset, fall back to llm_provider.
@@ -28,14 +29,20 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     google_api_key: str = ""
+    openai_api_key: str = ""
 
-    strategist_model: str = "claude-opus-4-6"
+    # Default model IDs are anchored to currently-shipping aliases:
+    # opus-4-7 is the latest Anthropic flagship at time of writing;
+    # sonnet-4-6 is the workhorse code-generation model. Override per-
+    # role in .env when you want a non-Anthropic provider, since the
+    # ID namespace is not shared across providers.
+    strategist_model: str = "claude-opus-4-7"
     player_model: str = "claude-sonnet-4-6"
     builder_model: str = "claude-sonnet-4-6"
     # The adversary critiques builder output before validation; pairing
     # it with a different provider/family from the builder is the point
     # — homogeneous critique tends to rubber-stamp homogeneous code.
-    adversary_model: str = "claude-opus-4-6"
+    adversary_model: str = "claude-opus-4-7"
 
     # Toggle for the adversary → fixer chain. When false, the orchestrator
     # validates builder output as-is, matching the pre-adversary behavior.

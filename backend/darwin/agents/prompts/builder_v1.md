@@ -9,9 +9,6 @@ material evaluation, alpha-beta search with a depth of 2–4 plies, basic
 quiescence (capture extensions), opening-move heuristics, etc. Pick the
 techniques that fit your specific question's category.
 
-QUESTION (category={category}):
-{question_text}
-
 CHAMPION SOURCE ({champion_name}, the engine you are modifying):
 
 ```python
@@ -28,65 +25,6 @@ adapt that idea):
 ```python
 {runner_up_code}
 ```
-
-REQUIREMENTS
-
-  - Subclass `BaseLLMEngine` from `darwin.engines.base`. Builder-generated
-    engines may also implement the `Engine` Protocol directly, but
-    subclassing is simpler.
-  - The class `__init__` MUST call:
-        super().__init__(
-            name="{engine_name}",
-            generation={generation},
-            lineage=["{champion_name}"],
-        )
-  - Implement `async def select_move(self, board, time_remaining_ms)`
-    returning a `chess.Move` that is legal on `board`. The signature
-    MUST be exactly that — `async def`, three params named
-    `self, board, time_remaining_ms`. The validator regex matches that
-    exact shape; a non-async `def` or a renamed parameter is rejected.
-  - `select_move` is **pure Python** — DO NOT call `complete(...)`
-    or `complete_text(...)`. The engine must decide moves entirely
-    from `board.legal_moves` and your own evaluation/search code.
-  - **Speed budget: each `select_move` call MUST return in under
-    5 seconds.** The referee enforces this with `asyncio.wait_for`.
-    Two implications:
-      a) Cap any recursive search at a sane fixed depth. If you
-         implement quiescence (capture-extension search), bound it
-         at depth ≤ 4 — unbounded quiescence in capture-dense
-         middlegames can explode into millions of nodes and forfeit
-         the game on time.
-      b) `asyncio.wait_for` can only cancel coroutines that
-         actually yield. Pure synchronous code keeps running past
-         the deadline. So inside any inner loop that iterates more
-         than ~200 times (i.e. anywhere search recursion or move
-         generation happens), insert `await asyncio.sleep(0)` once
-         per iteration of the *outer* loop. This lets the referee
-         actually kill a slow move when the budget is exceeded
-         instead of waiting for the search to return naturally.
-  - The module MUST end with the literal line: `engine = YourEngineClass()`
-    (registry imports this top-level symbol). Without it `load_engine`
-    raises `AttributeError` and the candidate is dropped.
-  - No hard line limit — write as much code as the technique
-    requires. Generations build on previous champions, so the engine
-    grows over time as features stack: piece-square tables, opening
-    books, transposition tables, etc. Don't drop a working feature
-    just to fit some arbitrary size.
-  - Allowed imports ONLY:
-        - the Python standard library (random, math, time, asyncio, ...)
-        - `chess`            (python-chess move generator + board)
-        - `darwin.config`    (settings)
-        - `darwin.engines.base`  (BaseLLMEngine, Engine)
-        - You do NOT need `darwin.llm` — the new contract forbids LLM calls
-          at play time.
-    Anything else — including `subprocess`, `os.system`, `socket`,
-    `eval`, `exec`, `importlib`, network libraries — is forbidden and
-    will be rejected by a regex backstop.
-  - Always have a fallback that returns a legal move, even if the LLM
-    response is malformed. The engine MUST NOT raise during a game.
-    The standard fallback is `next(iter(board.legal_moves))`.
-  - Keep the answer focused on the question's category — don't pile on
-    orthogonal changes. One concept per builder run.
 
 ## python-chess attributes you may use
 
@@ -151,6 +89,70 @@ Walk through this list mentally before calling `submit_engine`:
   - [ ] `select_move` always returns a legal move and never raises
         — wrap risky paths in try/except and fall back to
         `next(iter(board.legal_moves))`.
+
+<CACHE_BREAK>
+
+QUESTION (category={category}):
+{question_text}
+
+REQUIREMENTS
+
+  - Subclass `BaseLLMEngine` from `darwin.engines.base`. Builder-generated
+    engines may also implement the `Engine` Protocol directly, but
+    subclassing is simpler.
+  - The class `__init__` MUST call:
+        super().__init__(
+            name="{engine_name}",
+            generation={generation},
+            lineage=["{champion_name}"],
+        )
+  - Implement `async def select_move(self, board, time_remaining_ms)`
+    returning a `chess.Move` that is legal on `board`. The signature
+    MUST be exactly that — `async def`, three params named
+    `self, board, time_remaining_ms`. The validator regex matches that
+    exact shape; a non-async `def` or a renamed parameter is rejected.
+  - `select_move` is **pure Python** — DO NOT call `complete(...)`
+    or `complete_text(...)`. The engine must decide moves entirely
+    from `board.legal_moves` and your own evaluation/search code.
+  - **Speed budget: each `select_move` call MUST return in under
+    5 seconds.** The referee enforces this with `asyncio.wait_for`.
+    Two implications:
+      a) Cap any recursive search at a sane fixed depth. If you
+         implement quiescence (capture-extension search), bound it
+         at depth ≤ 4 — unbounded quiescence in capture-dense
+         middlegames can explode into millions of nodes and forfeit
+         the game on time.
+      b) `asyncio.wait_for` can only cancel coroutines that
+         actually yield. Pure synchronous code keeps running past
+         the deadline. So inside any inner loop that iterates more
+         than ~200 times (i.e. anywhere search recursion or move
+         generation happens), insert `await asyncio.sleep(0)` once
+         per iteration of the *outer* loop. This lets the referee
+         actually kill a slow move when the budget is exceeded
+         instead of waiting for the search to return naturally.
+  - The module MUST end with the literal line: `engine = YourEngineClass()`
+    (registry imports this top-level symbol). Without it `load_engine`
+    raises `AttributeError` and the candidate is dropped.
+  - No hard line limit — write as much code as the technique
+    requires. Generations build on previous champions, so the engine
+    grows over time as features stack: piece-square tables, opening
+    books, transposition tables, etc. Don't drop a working feature
+    just to fit some arbitrary size.
+  - Allowed imports ONLY:
+        - the Python standard library (random, math, time, asyncio, ...)
+        - `chess`            (python-chess move generator + board)
+        - `darwin.config`    (settings)
+        - `darwin.engines.base`  (BaseLLMEngine, Engine)
+        - You do NOT need `darwin.llm` — the new contract forbids LLM calls
+          at play time.
+    Anything else — including `subprocess`, `os.system`, `socket`,
+    `eval`, `exec`, `importlib`, network libraries — is forbidden and
+    will be rejected by a regex backstop.
+  - Always have a fallback that returns a legal move, even if the LLM
+    response is malformed. The engine MUST NOT raise during a game.
+    The standard fallback is `next(iter(board.legal_moves))`.
+  - Keep the answer focused on the question's category — don't pile on
+    orthogonal changes. One concept per builder run.
 
 ## Worked minimal example (illustrative — your engine should differ)
 

@@ -54,6 +54,17 @@ logger = logging.getLogger("darwin.agents.builder")
 
 PROMPT = (Path(__file__).parent / "prompts" / "builder_v1.md").read_text()
 
+# The builder prompt is split at this literal marker into a stable
+# cacheable prefix (intro + champion source + python-chess docs +
+# checklist — identical across every builder call within a single
+# generation) and a per-builder dynamic suffix (question + engine_name
+# + requirements + worked example). On Anthropic the prefix carries
+# ``cache_control: ephemeral`` so the 4 parallel builder calls in one
+# generation share a 5-minute prefix cache. On Gemini and OpenAI the
+# split is transparent — the two halves are concatenated and sent as
+# one user message.
+_CACHE_BREAK_MARKER = "<CACHE_BREAK>"
+
 # Builder output goes here. We do NOT import GENERATED_DIR from
 # darwin.engines.registry to avoid a circular dependency at module load
 # time (registry is Person A's territory and may grow imports from us).
@@ -345,7 +356,7 @@ async def build_engine(
     )
     runner_up_label = runner_up_name or "-"
 
-    user = PROMPT.format(
+    user_full = PROMPT.format(
         category=question.category,
         question_text=question.text,
         champion_code=champion_code,
@@ -356,6 +367,23 @@ async def build_engine(
         runner_up_name=runner_up_label,
     )
 
+    # Split at the cache marker. Prefix is stable across the 4 parallel
+    # builders within a single generation (no per-builder placeholders);
+    # the suffix carries everything that varies. If the marker is
+    # missing — e.g. someone deleted it from the template — fall back
+    # to sending the whole prompt as one block, no caching, rather than
+    # silently shipping a malformed prefix that would still hit the
+    # cache key on subsequent calls.
+    if _CACHE_BREAK_MARKER in user_full:
+        cache_prefix, _, user_dynamic = user_full.partition(_CACHE_BREAK_MARKER)
+    else:
+        logger.warning(
+            "builder_v1.md is missing the %s marker — disabling prompt "
+            "caching for this generation",
+            _CACHE_BREAK_MARKER,
+        )
+        cache_prefix, user_dynamic = None, user_full
+
     logger.info(
         "build_engine starting engine=%s category=%s gen=%d",
         engine_name, question.category, generation,
@@ -364,7 +392,7 @@ async def build_engine(
     content = await complete(
         model=settings.builder_model,
         system="You write Python chess engines.",
-        user=user,
+        user=user_dynamic,
         # Cap at ~32k output tokens — close to Gemini 3 Flash's max
         # output ceiling. Engines grow gen-over-gen as features stack
         # (piece-square tables, opening books, transposition tables);
@@ -373,6 +401,7 @@ async def build_engine(
         max_tokens=32768,
         tools=[TOOL],
         provider=settings.provider_for("builder"),
+        cache_prefix=cache_prefix,
     )
 
     # Capture every block we got so a non-tool_use response is loggable.
