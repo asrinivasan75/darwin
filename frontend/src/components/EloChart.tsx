@@ -55,12 +55,26 @@ export default function EloChart({ events }: EloChartProps) {
     { gen: 0, elo: 1500, champion: "baseline-v0", promoted: false },
   ];
 
+  // Plot each generation's champion's actual post-tournament Elo —
+  // *not* a cumulative sum of elo_deltas. The deltas belong to
+  // *different* engines from gen to gen (whoever wins that gen), so
+  // adding them isn't meaningful. The ratings dict (added in this
+  // commit) gives us the exact value to plot directly.
+  //
+  // Falls back to (prev + elo_delta) for older payloads that pre-date
+  // the `ratings` field, so historical event logs still render.
   for (const ev of finishedEvents) {
-    const prev = data[data.length - 1].elo;
+    let elo: number;
+    if (ev.ratings && ev.ratings[ev.new_champion] !== undefined) {
+      elo = ev.ratings[ev.new_champion];
+    } else {
+      // Legacy fallback — assume continuous (incorrect but better than nothing).
+      const prev = data[data.length - 1].elo;
+      elo = prev + ev.elo_delta;
+    }
     data.push({
       gen: ev.number,
-      // round to 1 decimal so the Y-axis stays readable
-      elo: Math.round((prev + ev.elo_delta) * 10) / 10,
+      elo: Math.round(elo * 10) / 10,
       champion: ev.new_champion,
       promoted: ev.promoted,
     });
