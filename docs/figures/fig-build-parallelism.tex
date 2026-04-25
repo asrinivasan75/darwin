@@ -14,18 +14,19 @@
     tick/.style={font=\footnotesize, anchor=north},
 ]
 
-% horizontal axis: 0..24h compressed to 0..14cm
-\def\xscale{0.55}
+\def\xscale{0.5}
+
+% Hour grid
 \foreach \h in {0,4,8,12,16,20,24} {
-    \draw[gray!50] (\h*\xscale, -0.4) -- (\h*\xscale, 5.6);
-    \node[tick] at (\h*\xscale, -0.4) {\h h};
+    \draw[gray!50] (\h*\xscale, -1.2) -- (\h*\xscale, 5.6);
+    \node[tick] at (\h*\xscale, -1.2) {\h h};
 }
 
 % Hour-0 contract freeze
-\draw[freeze] (1*\xscale, -0.3) -- (1*\xscale, 5.7)
+\draw[freeze] (1*\xscale, -1.1) -- (1*\xscale, 5.7)
     node[above, font=\footnotesize\bfseries] {contracts frozen};
 
-% rows (lanes)
+% Workstream lanes
 \node[anchor=east] at (-0.2, 5.0) {\bfseries Person A};
 \node[a, anchor=west, minimum width={9*\xscale*1cm}]  at (1*\xscale, 5.0) {engine core + baseline};
 
@@ -41,16 +42,20 @@
 \node[anchor=east] at (-0.2, 1.4) {\bfseries Person E};
 \node[e, anchor=west, minimum width={17*\xscale*1cm}] at (1*\xscale, 1.4) {API + WS bus + orchestration};
 
-% Merge points (vertical drops to a merge axis at y=0.4)
-\foreach \xh/\lbl in {10/A, 13/B, 14/C, 17/E, 20/D} {
-    \draw[merge, -latex] (\xh*\xscale, 0.7) -- (\xh*\xscale, 0.45);
-    \node[font=\footnotesize, anchor=north] at (\xh*\xscale, 0.45) {merge \lbl};
-}
+% Merge axis
 \draw[merge] (1*\xscale, 0.7) -- (24*\xscale, 0.7);
 
-% Legend tag
-\node[font=\footnotesize\itshape, anchor=west] at (0, -0.95)
-    {Each lane is one engineer driving one AI coding agent on one feat/* branch.
+% Merge labels — staggered vertically so 13h/14h labels don't collide
+\foreach \xh/\lbl/\dy in {10/A/0, 13/B/0, 14/C/-0.45, 17/E/0, 20/D/0} {
+    \draw[merge, -latex] (\xh*\xscale, 0.7) -- (\xh*\xscale, 0.45 + \dy);
+    \node[font=\footnotesize, anchor=north] at (\xh*\xscale, 0.45 + \dy) {merge \lbl};
+}
+
+% Bottom caption — width-constrained so it fits on the page
+\node[font=\footnotesize\itshape, anchor=north west, align=left,
+      text width={24*\xscale*1cm}]
+    at (0, -1.7)
+    {Each lane is one engineer driving one AI coding agent on one feat/* branch.\\
      Merge order is fixed by inter-plan dependencies.};
 
 \end{tikzpicture}

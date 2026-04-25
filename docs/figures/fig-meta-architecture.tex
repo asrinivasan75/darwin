@@ -1,91 +1,112 @@
 % fig-meta-architecture.tex
-% Whole-system architecture: backend modules, frontend, DB, optional Modal
-% backend, WS bus.
+% Whole-system architecture: backend modules (top-left), storage + event
+% bus (bottom band), API surface + frontend (right). Explicit absolute
+% coordinates throughout to keep boxes from overlapping.
 \begin{tikzpicture}[
     font=\small\sffamily,
+    x=1cm, y=1cm,
     mod/.style={
         draw=black!60, rounded corners=2pt, fill=blue!6,
-        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+        minimum width=22mm, minimum height=8mm, align=center,
+        inner sep=2pt, font=\footnotesize,
     },
     api/.style={
         draw=black!60, rounded corners=2pt, fill=red!10,
-        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+        minimum width=22mm, minimum height=7mm, align=center,
+        inner sep=2pt, font=\footnotesize,
     },
     store/.style={
         draw=black!60, fill=gray!10,
-        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+        minimum width=44mm, minimum height=8mm, align=center,
+        inner sep=2pt, font=\footnotesize,
     },
     fe/.style={
         draw=black!60, rounded corners=2pt, fill=purple!8,
-        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+        minimum width=24mm, minimum height=6mm, align=center,
+        inner sep=2pt, font=\footnotesize,
     },
     modal/.style={
         draw=black!60, rounded corners=2pt, fill=orange!10,
-        minimum height=7mm, align=center, inner sep=3pt, font=\footnotesize,
+        minimum width=22mm, minimum height=10mm, align=center,
+        inner sep=2pt, font=\footnotesize,
     },
     bus/.style={
         draw=black!70, fill=green!12,
-        minimum height=6mm, minimum width=82mm, align=center,
-        font=\footnotesize\bfseries,
+        minimum width=58mm, minimum height=7mm, align=center,
+        inner sep=2pt, font=\footnotesize\bfseries,
     },
     arrow/.style={-latex, draw=black!70, line width=0.4pt},
     biarr/.style={latex-latex, draw=black!70, line width=0.4pt},
     group/.style={
-        draw=black!40, dashed, rounded corners=4pt,
-        inner sep=3mm,
+        draw=black!40, dashed, rounded corners=4pt, inner sep=3mm,
     },
 ]
 
-% Backend cluster
-\node[mod] (orch)  at (0,3.0) {orchestration\\\texttt{generation.py}};
-\node[mod] (strat) at (-2.4,2.0) {agents\\\texttt{strategist}};
-\node[mod] (build) at (0,2.0)    {agents\\\texttt{builder}};
-\node[mod] (val)   at (2.4,2.0)  {agents\\\texttt{validator}};
-\node[mod] (eng)   at (-2.4,0.7) {engines\\\texttt{base + baseline}};
-\node[mod] (tour)  at (0,0.7)    {tournament\\\texttt{runner + ref + elo}};
-\node[mod] (sel)   at (2.4,0.7)  {tournament\\\texttt{selection}};
+% ── Backend cluster: agents row + engines/tournament row ─────────────
+\node[mod] (orch)   at (1.2, 5.8) {orchestration\\\texttt{generation.py}};
+\node[mod] (strat)  at (-1.6, 4.4) {agents\\\texttt{strategist}};
+\node[mod] (build)  at (1.2, 4.4)  {agents\\\texttt{builder}};
+\node[mod] (val)    at (4.0, 4.4)  {agents\\\texttt{validator}};
 
+\node[mod] (eng)    at (-1.6, 2.9) {engines\\\texttt{base + baseline}};
+\node[mod] (tour)   at (1.2, 2.9)  {tournament\\\texttt{runner + ref + elo}};
+\node[mod] (sel)    at (4.0, 2.9)  {tournament\\\texttt{selection}};
+
+\begin{pgfonlayer}{background}
 \node[group, fit=(orch)(strat)(val)(eng)(sel),
-      label={[font=\footnotesize\bfseries]above:Backend (Python)}] (be) {};
+      label={[font=\footnotesize\bfseries, anchor=south west, yshift=1pt]north west:Backend (Python)}] (be) {};
+\end{pgfonlayer}
 
-% Storage
-\node[store, below=10mm of tour] (db) {SQLite\\\texttt{engines / games / generations}};
+% ── Modal pool (left of backend) ─────────────────────────────────────
+\node[modal] (modal) at (-4.6, 2.9) {Modal pool\\\footnotesize warm pool\\\footnotesize 40 ctnrs};
 
-% API + bus
-\node[api, right=18mm of orch] (api1) {FastAPI\\\texttt{/api/*}};
-\node[api, below=2mm of api1] (api2) {WebSocket\\\texttt{/ws}};
-\node[bus, below=14mm of api2] (bus) {EventBus (in-process pub/sub)};
+% ── Storage row, well below backend ──────────────────────────────────
+\node[store] (db) at (1.2, 0.6) {SQLite \texttt{engines / games / generations}};
 
-% Modal backend (optional)
-\node[modal, left=12mm of eng] (modal) {Modal pool\\\footnotesize warm pool / 40 ctnrs};
+% ── Event bus, in its own band below storage ─────────────────────────
+\node[bus] (bus) at (1.2, -0.9) {EventBus (in-process pub/sub)};
+\node[font=\footnotesize\itshape, below=1mm of bus, align=center]
+    {Every workstream emits events; the bus fans out to every WS subscriber.};
 
-% Frontend
-\node[fe, right=14mm of api1, yshift=10mm] (cli) {React + Vite client};
-\node[fe, below=2mm of cli] (board) {LiveBoard};
-\node[fe, below=2mm of board] (chart) {EloChart};
-\node[fe, below=2mm of chart] (feed)  {StrategistFeed};
+% ── API column ───────────────────────────────────────────────────────
+\node[api] (api1) at (7.4, 5.0) {FastAPI \texttt{/api/*}};
+\node[api] (api2) at (7.4, 3.8) {WebSocket \texttt{/ws}};
+
+% ── Frontend column ──────────────────────────────────────────────────
+\node[fe] (cli)   at (10.6, 5.4) {React + Vite client};
+\node[fe] (board) at (10.6, 4.5) {LiveBoard};
+\node[fe] (chart) at (10.6, 3.7) {EloChart};
+\node[fe] (feed)  at (10.6, 2.9) {StrategistFeed};
+\begin{pgfonlayer}{background}
 \node[group, fit=(cli)(board)(chart)(feed),
-      label={[font=\footnotesize\bfseries]above:Frontend}] (fe) {};
+      label={[font=\footnotesize\bfseries, anchor=south, yshift=1pt]north:Frontend}] (fe) {};
+\end{pgfonlayer}
 
-% Edges
+% ── Edges ────────────────────────────────────────────────────────────
 \draw[arrow] (orch) -- (strat);
 \draw[arrow] (orch) -- (build);
 \draw[arrow] (orch) -- (val);
-\draw[arrow] (orch) -- (tour);
-\draw[arrow] (val) -- (tour);
+\draw[arrow] (val)  -- (tour);
 \draw[arrow] (tour) -- (sel);
 \draw[arrow] (build) -- (eng);
-\draw[arrow] (tour.south) -- (db);
-\draw[arrow] (orch.south) -- (db);
-\draw[arrow] (orch.east) -- (api1.west);
-\draw[arrow] (tour.east) -| (bus.west);
-\draw[arrow] (orch.east) -| (bus.west);
-\draw[arrow] (bus.east) -| (api2.south);
-\draw[biarr] (api1.east) -- (cli.west);
-\draw[biarr] (api2.east) -- (cli.west);
-\draw[biarr] (eng.west) -- (modal.east);
 
-\node[font=\footnotesize\itshape, below=1mm of bus]
-    {Every workstream emits events; the bus fans out to every WS subscriber.};
+% backend -> SQLite
+\draw[arrow] (tour.south) -- (db.north);
+
+% backend -> bus (route around storage)
+\draw[arrow] (sel.south) -- ++(0,-0.6) -| (bus.east);
+
+% bus -> WebSocket  (route up the right side, NOT through storage)
+\draw[arrow] (bus.east) -- ++(2.4,0) |- (api2.south);
+
+% backend -> API
+\draw[arrow] (orch.east) -| (api1.north);
+
+% API <-> frontend
+\draw[biarr] (api1.east) -- (board.west);
+\draw[biarr] (api2.east) -- (chart.west);
+
+% engines <-> Modal
+\draw[biarr] (eng.west) -- (modal.east);
 
 \end{tikzpicture}
