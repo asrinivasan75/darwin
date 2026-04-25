@@ -745,7 +745,7 @@ break the rubber-stamp failure mode of homogeneous critique. The
 model ID for a role must be appropriate for its resolved provider
 because each SDK only knows its own model namespace.
 
-## 7.3 Gemini → Anthropic adapter
+## 7.3 Gemini -> Anthropic adapter
 
 Gemini's tool surface is `Tool(function_declarations=[...])` and its
 response carries `function_call` parts. To keep caller code identical
@@ -901,7 +901,7 @@ time; unknown keys are ignored.
 | `player_model`           | `claude-sonnet-4-6`      | Player model ID                                                             |
 | `builder_model`          | `claude-sonnet-4-6`      | Builder + fixer model ID                                                    |
 | `adversary_model`        | `claude-opus-4-6`        | Adversary model ID                                                          |
-| `enable_adversary`       | `True`                   | Toggle for the adversary → fixer chain                                      |
+| `enable_adversary`       | `True`                   | Toggle for the adversary -> fixer chain                                     |
 | `database_url`           | `sqlite:///./darwin.db`  | SQLModel database URL                                                       |
 | `time_per_move_ms`       | `20_000`                 | Per-move budget in tournament games                                         |
 | `games_per_pairing`      | `2`                      | Number of games per (white, black) pair per round-robin                     |
