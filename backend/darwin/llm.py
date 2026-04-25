@@ -126,37 +126,47 @@ async def complete(
     user: str,
     max_tokens: int = 256,
     tools: list[dict] | None = None,
+    provider: str | None = None,
 ) -> Any:
-    """One-shot chat call routed through the configured provider.
+    """One-shot chat call routed through a provider.
+
+    ``provider`` selects the SDK ("claude" or "gemini"). When ``None``,
+    falls back to ``settings.llm_provider`` — this preserves the
+    pre-multi-provider behavior for callers that don't care which
+    backend handles their call. Roles that want explicit control
+    (strategist, builder, player) should pass ``provider`` directly so
+    a single generation can fan out to multiple providers in parallel.
 
     Returns a list of content blocks. For text replies, read
     ``content[0].text``. For tool-use replies, look for a block where
     ``block.type == "tool_use"`` and read ``block.name`` / ``block.input``.
-
-    The same return shape is produced regardless of ``LLM_PROVIDER``.
+    The same return shape is produced regardless of provider.
     """
+    resolved = provider or settings.llm_provider
     tool_names = [t["name"] for t in tools] if tools else []
     log.info(
         "complete provider=%s model=%s prompt_chars=%d max_tokens=%d tools=%s",
-        settings.llm_provider, model, len(user), max_tokens, tool_names,
+        resolved, model, len(user), max_tokens, tool_names,
     )
     t0 = time.monotonic()
     try:
-        if settings.llm_provider == "gemini":
+        if resolved == "gemini":
             blocks = await _complete_gemini(model, system, user, max_tokens, tools)
-        else:
+        elif resolved == "claude":
             blocks = await _complete_claude(model, system, user, max_tokens, tools)
+        else:
+            raise ValueError(f"unknown provider: {resolved!r}")
     except Exception:
         log.exception(
             "complete failed after %.1fs provider=%s model=%s",
-            time.monotonic() - t0, settings.llm_provider, model,
+            time.monotonic() - t0, resolved, model,
         )
         raise
 
     summary = _summarize_blocks(blocks)
     log.info(
         "complete ok in %.1fs provider=%s model=%s blocks=%s",
-        time.monotonic() - t0, settings.llm_provider, model, summary,
+        time.monotonic() - t0, resolved, model, summary,
     )
     return blocks
 
@@ -175,13 +185,22 @@ def _summarize_blocks(blocks: Any) -> list[str]:
     return out
 
 
-async def complete_text(model: str, system: str, user: str, max_tokens: int = 256) -> str:
+async def complete_text(
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int = 256,
+    provider: str | None = None,
+) -> str:
     """Convenience wrapper for plain-text replies.
 
     Returns the first text block's content, or ``""`` if no text block
-    came back.
+    came back. ``provider`` is forwarded to ``complete()``; ``None``
+    means fall back to the global default.
     """
-    content = await complete(model, system, user, max_tokens=max_tokens)
+    content = await complete(
+        model, system, user, max_tokens=max_tokens, provider=provider
+    )
     for block in content:
         if getattr(block, "type", None) == "text":
             return block.text

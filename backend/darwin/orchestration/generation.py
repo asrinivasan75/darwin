@@ -11,7 +11,9 @@ import logging
 import re
 from datetime import datetime
 
+from darwin.agents.adversary import critique_engine
 from darwin.agents.builder import build_engine, validate_engine
+from darwin.agents.fixer import fix_engine
 from darwin.agents.strategist import CATEGORIES, propose_questions
 from darwin.api.websocket import bus
 from darwin.config import settings
@@ -207,6 +209,62 @@ async def run_generation(
                 }
             )
             return None
+
+        # Adversary critique + fixer revision. Sits between build and
+        # validate so a code-quality issue can be caught and patched
+        # before we waste a smoke-game slot on it. Best-effort: any
+        # failure leaves ``p`` unchanged so the un-revised candidate
+        # still gets a shot at validation rather than being dropped.
+        if settings.enable_adversary:
+            engine_name = p.stem.replace("_", "-")
+            critique = ""
+            try:
+                original_code = p.read_text()
+                critique = await critique_engine(q, original_code, engine_name)
+            except Exception as exc:
+                log.warning(
+                    "adversary raised q=%d category=%s engine=%s err=%r",
+                    q.index, q.category, engine_name, exc,
+                )
+            await bus.emit(
+                {
+                    "type": "adversary.completed",
+                    "question_index": q.index,
+                    "engine_name": engine_name,
+                    "critique_chars": len(critique),
+                    "ok": bool(critique),
+                }
+            )
+
+            if critique:
+                fixer_ok = True
+                fixer_err: str | None = None
+                try:
+                    p = await fix_engine(
+                        p,
+                        q,
+                        critique,
+                        champion_code=primary_src,
+                        champion_name=primary.name,
+                        generation=generation_number,
+                    )
+                except Exception as exc:
+                    fixer_ok = False
+                    fixer_err = str(exc)
+                    log.warning(
+                        "fixer raised q=%d category=%s engine=%s err=%r",
+                        q.index, q.category, engine_name, exc,
+                    )
+                await bus.emit(
+                    {
+                        "type": "fixer.completed",
+                        "question_index": q.index,
+                        "engine_name": engine_name,
+                        "ok": fixer_ok,
+                        "error": fixer_err,
+                    }
+                )
+
         ok, err = await validate_engine(p)
         # ``p.stem`` is the safe filename (underscored: gen1_book_abc).
         # ``engine.name`` and game.finished.white/black use the hyphenated
