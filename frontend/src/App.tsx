@@ -177,29 +177,31 @@ function Header(props: HeaderProps) {
           </div>
         ) : null}
 
-        <h1
-          className="font-display leading-[0.92]"
-          style={{
-            fontSize: "clamp(56px, 8.4vw, 124px)",
-            color: "var(--ink)",
-            fontVariationSettings:
-              '"opsz" 144, "SOFT" 100, "wght" 360',
-            letterSpacing: "-0.025em",
-          }}
-        >
-          darwin
-        </h1>
-
-        <p
-          className="mt-4 max-w-xl text-[14.5px] leading-relaxed"
-          style={{ color: "var(--ink-soft)" }}
-        >
-          An evolutionary loop for chess engines.
-          <span style={{ color: "var(--ink-faint)" }}>
-            {" "}
-            The LLM proposes, two more build, the board decides who survives.
-          </span>
-        </p>
+        <div className="flex items-center gap-5">
+          <img
+            src="/darwin-logo.png"
+            alt="Darwin"
+            className="shrink-0 select-none"
+            style={{
+              width: "clamp(64px, 9vw, 124px)",
+              height: "clamp(64px, 9vw, 124px)",
+              filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.35))",
+            }}
+            draggable={false}
+          />
+          <h1
+            className="font-display leading-[0.92]"
+            style={{
+              fontSize: "clamp(56px, 8.4vw, 124px)",
+              color: "var(--ink)",
+              fontVariationSettings:
+                '"opsz" 144, "SOFT" 100, "wght" 360',
+              letterSpacing: "-0.025em",
+            }}
+          >
+            darwin
+          </h1>
+        </div>
       </div>
 
       <div className="flex flex-col items-stretch gap-4 lg:items-end">
@@ -327,10 +329,7 @@ function Footer() {
         color: "var(--ink-faint)",
       }}
     >
-      <span>Built at the Point72 Hackathon</span>
-      <span className="font-mono-tab normal-case tracking-normal">
-        ws · /api · sqlite
-      </span>
+      <span>Cubist Hackathon</span>
     </footer>
   );
 }
