@@ -37,6 +37,20 @@ export async function fetchGenerations(): Promise<unknown> {
 }
 
 /**
+ * Fetches the Python source for an engine by name.
+ *
+ * @param name - engine name from the generations/engines API
+ * @returns raw Python source from `GET /api/engines/{name}/code`
+ */
+export async function fetchEngineCode(name: string): Promise<string> {
+  const r = await fetch(`/api/engines/${encodeURIComponent(name)}/code`);
+  if (!r.ok) {
+    throw new Error(`Could not load source for ${name} (${r.status})`);
+  }
+  return r.text();
+}
+
+/**
  * Fetches games for a specific generation.
  *
  * @param gen - generation number to filter by

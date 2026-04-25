@@ -8,7 +8,7 @@
  * @module App
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useEventStream } from "./hooks/useEventStream";
 import LiveBoards from "./components/LiveBoards";
 import EloChart from "./components/EloChart";
@@ -16,9 +16,13 @@ import EnginesEloChart from "./components/EnginesEloChart";
 import StrategistFeed from "./components/StrategistFeed";
 import Bracket from "./components/Bracket";
 import GenerationTimeline from "./components/GenerationTimeline";
+import DiffView from "./components/DiffView";
+
+type ViewMode = "dashboard" | "diff";
 
 export default function App() {
   const events = useEventStream();
+  const [activeView, setActiveView] = useState<ViewMode>("dashboard");
 
   const { isRunning, currentGen, currentChampion, finishedCount } = (() => {
     let running = false;
@@ -98,12 +102,16 @@ export default function App() {
           currentChampion={currentChampion}
           finishedCount={finishedCount}
           eventCount={events.length}
+          activeView={activeView}
+          onViewChange={setActiveView}
           onRun={runGeneration}
           onStop={stopGeneration}
           onClear={clearAll}
         />
 
         {/* Row 1 — live boards (what is it doing right now?) */}
+        {activeView === "dashboard" ? (
+          <>
         <section className="rise" style={{ animationDelay: "240ms" }}>
           <LiveBoards events={events} />
         </section>
@@ -134,6 +142,11 @@ export default function App() {
           <GenerationTimeline events={events} />
         </section>
 
+          </>
+        ) : (
+          <DiffView />
+        )}
+
         <Footer />
       </div>
     </div>
@@ -148,6 +161,8 @@ interface HeaderProps {
   currentChampion: string | null;
   finishedCount: number;
   eventCount: number;
+  activeView: ViewMode;
+  onViewChange: (view: ViewMode) => void;
   onRun: () => void;
   onStop: () => void;
   onClear: () => void;
@@ -160,6 +175,8 @@ function Header(props: HeaderProps) {
     currentChampion,
     finishedCount,
     eventCount,
+    activeView,
+    onViewChange,
     onRun,
     onStop,
     onClear,
@@ -211,6 +228,24 @@ function Header(props: HeaderProps) {
           isRunning={isRunning}
         />
 
+        <nav
+          className="flex flex-wrap items-center justify-end gap-2"
+          aria-label="Dashboard views"
+        >
+          <ViewButton
+            active={activeView === "dashboard"}
+            onClick={() => onViewChange("dashboard")}
+          >
+            dashboard
+          </ViewButton>
+          <ViewButton
+            active={activeView === "diff"}
+            onClick={() => onViewChange("diff")}
+          >
+            diff view
+          </ViewButton>
+        </nav>
+
         <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             onClick={onStop}
@@ -238,6 +273,32 @@ function Header(props: HeaderProps) {
         </div>
       </div>
     </header>
+  );
+}
+
+function ViewButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="btn btn-ghost"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        color: active ? "var(--ink)" : "var(--ink-soft)",
+        borderColor: active ? "rgba(201,168,118,0.45)" : "var(--line-strong)",
+        background: active ? "rgba(201,168,118,0.14)" : undefined,
+      }}
+    >
+      {children}
+    </button>
   );
 }
 
