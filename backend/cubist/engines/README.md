@@ -22,10 +22,9 @@ move, so engine implementations should always have a legal fallback.
 
 ## Built-in Engines
 
-- `cubist.engines.baseline`: generation-0 LLM engine. It prompts the shared
-  player model with FEN, side to move, move number, and legal SAN moves. It
-  parses one SAN token and falls back to the first legal move if parsing or the
-  provider call fails.
+- `cubist.engines.baseline`: generation-0 local chess engine. It does not call
+  an LLM or any external API. It uses a deterministic two-ply alpha-beta search
+  with terminal detection, material, and mobility heuristics.
 - `cubist.engines.random_engine`: no-API random legal move engine for tests,
   tournament smoke checks, and builder validation.
 
