@@ -8,7 +8,19 @@ A self-improving chess engine that evolves its own scaffolding via agentic tourn
 
 **Demo:** [youtube.com/watch?v=g2TgF6kXoFA](https://www.youtube.com/watch?v=g2TgF6kXoFA)
 
-> Built at the **2026 Point72 Cubist Hackathon** — placed **2nd**.
+> Built at the **2026 Point72 Cubist Hackathon** — placed **2nd** out of the field.
+
+## Team
+
+Built by:
+
+- **[Aadithya Srinivasan](https://github.com/asrinivasan75)** *(lead contributor)* — orchestration loop, live React dashboard, tournament infrastructure, Modal scaling, adversary/fixer agent chain, Elo seeding, frontend perf hardening
+- Nathan Aronson
+- Kevin Xue
+- Kevin Zhou
+- Max Veksler
+
+> *This fork (`asrinivasan75/darwin`) is maintained as the author's personal copy of the project. The shared team repo lives at [`nathanaronson/darwin`](https://github.com/nathanaronson/darwin).*
 
 ---
 
